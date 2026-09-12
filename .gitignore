@@ -1,0 +1,119 @@
+# Node & Build artifacts
+node_modules/
+.next/
+dist/
+out/
+build/
+.pytest_cache/
+__pycache__/
+*.pyc
+
+# Environment & Secrets
+.env
+.env*.local
+auth.json
+.gitconfig
+
+# Media & Large binaries (>50MB)
+*.mp4
+*.mp3
+*.zip
+*.tar
+*.tar.gz
+
+# Windows system files & user directories
+NTUSER*
+ntuser*
+AppData/
+Application Data/
+Contacts/
+Cookies/
+Desktop/
+Documents/
+Downloads/
+Favorites/
+IntelGraphicsProfiles/
+Links/
+Local Settings/
+Music/
+My Documents/
+NetHood/
+OneDrive/
+Pictures/
+PrintHood/
+Recent/
+Saved Games/
+Searches/
+SendTo/
+Start Menu/
+Templates/
+Videos/
+
+# Tool configurations & caches
+.agents/
+.assetsignore
+.bash_history
+.bash_profile
+.bun/
+.cache/
+.claude/
+.claude.json
+.cline/
+.codex/
+.config/
+.cursor/
+.gemini/
+.genlayer/
+.grok/
+.lesshst
+.local/
+.okx-agent-task/
+.onchainos/
+.openclaw/
+.streamlit/
+.viminfo
+.vscode/
+.vscode-shared/
+.wrangler/
+
+# Scratch & other workspaces
+AgentGuard/
+EvidenceConsensus/
+GenScreener/
+GuardianAI/
+guardianai-backend/
+guardianai-dashboard/
+HaltLayer/
+HedgePulse/
+ObliGen/
+POH/
+VentureMind/
+ace/
+aegis-rtoken/
+agent/
+anonconfess-contracts/
+awesome-technocore/
+binance-sentinel/
+bnb-agenthub/
+bnb-projects/
+download_cli.ps1
+genlayer-bountyarbiter/
+genlayer-project-boilerplate/
+genlayer-projects/
+genlayer-reference/
+genspellingbee/
+ryo-signalroom/
+script.txt
+skills-lock.json
+subtitles.srt
+trustlens-ai/
+worker.js
+wrangler.json
+wrangler.jsonc
+logo.png
+config.toml
+package-lock.json
+artifacts/
+PitchMarket/
+SignalCore/
+
