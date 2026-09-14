@@ -1,7 +1,7 @@
 import { createClient, createAccount, generatePrivateKey, chains } from "genlayer-js";
 
 export const CONTRACT_ADDRESS = (process.env.NEXT_PUBLIC_CONTRACT_ADDRESS ||
-  "0x5EE011Ca91fE569C54ee33c3555918BF0d90b784") as `0x${string}`;
+  "0xf7908d23780bA6fd489B5835f13143c5aF15Fe06") as `0x${string}`;
 
 export const RPC_URL =
   process.env.NEXT_PUBLIC_GENLAYER_RPC_URL || "https://studio.genlayer.com/api";
@@ -13,16 +13,19 @@ export interface ProtocolState {
   total_minted: number;
   total_collateral: number;
   asset_price_usd: number;
+  last_fee_update?: number;
+  cumulative_interest_factor?: number;
 }
 
 export interface UserPosition {
   user: string;
-  collateral: number;
+  collateral: number | string;
   collateral_usd: number;
-  debt: number;
-  max_debt: number;
+  debt: number | string;
+  max_debt: number | string;
   current_cr_bps: number;
   is_solvent: boolean;
+  ausd_balance?: number | string;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -52,6 +55,16 @@ export async function getUserPosition(address: string): Promise<UserPosition> {
     args: [address],
   });
   return position as unknown as UserPosition;
+}
+
+export async function getAusdBalance(address: string): Promise<number | string> {
+  const client = getClient();
+  const balance = await client.readContract({
+    address: CONTRACT_ADDRESS,
+    functionName: "balance_of",
+    args: [address],
+  });
+  return balance as unknown as (number | string);
 }
 
 export { createAccount, generatePrivateKey };

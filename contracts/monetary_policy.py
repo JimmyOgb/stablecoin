@@ -2,9 +2,11 @@
 
 from genlayer import *
 import json
+import datetime
 
-TELEMETRY_URL = "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true"
-DEFAULT_ETH_PRICE = 2500
+GEN_TELEMETRY_URL = "https://api.coingecko.com/api/v3/simple/price?ids=genlayer&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true"
+DEFAULT_GEN_PRICE = 2500
+SECONDS_PER_YEAR = 31536000
 
 @gl.evm.contract_interface
 class _Recipient:
@@ -20,6 +22,13 @@ def normalize_address(addr: str) -> str:
         s = "0x" + s
     return s
 
+def _get_current_timestamp() -> int:
+    try:
+        now = datetime.datetime.now(datetime.timezone.utc)
+        return int(now.timestamp())
+    except Exception:
+        return 0
+
 class MonetaryPolicyContract(gl.Contract):
     collateral_ratio: u256
     stability_fee_bps: u256
@@ -29,6 +38,11 @@ class MonetaryPolicyContract(gl.Contract):
     asset_price_usd: u256
     user_collateral: TreeMap[str, u256]
     user_debt: TreeMap[str, u256]
+    balances: TreeMap[str, u256]
+    allowances: TreeMap[str, TreeMap[str, u256]]
+    last_fee_update: u256
+    cumulative_interest_factor: u256
+    user_last_factor: TreeMap[str, u256]
 
     def __init__(self):
         self.collateral_ratio = u256(150)
@@ -36,9 +50,127 @@ class MonetaryPolicyContract(gl.Contract):
         self.last_reasoning = "Genesis monetary policy: Normal volatility conditions. Base CR set to 150%, stability fee 300 bps."
         self.total_minted = u256(0)
         self.total_collateral = u256(0)
-        self.asset_price_usd = u256(DEFAULT_ETH_PRICE)
-        self.user_collateral = TreeMap()
-        self.user_debt = TreeMap()
+        self.asset_price_usd = u256(DEFAULT_GEN_PRICE)
+        self.last_fee_update = u256(_get_current_timestamp())
+        self.cumulative_interest_factor = u256(10**18)
+
+    # --- Standard Token Mechanics (Transferable aUSD) ---
+
+    @gl.public.view
+    def name(self) -> str:
+        return "Adaptive USD"
+
+    @gl.public.view
+    def symbol(self) -> str:
+        return "aUSD"
+
+    @gl.public.view
+    def decimals(self) -> u256:
+        return u256(18)
+
+    @gl.public.view
+    def total_supply(self) -> u256:
+        return self.total_minted
+
+    @gl.public.view
+    def balance_of(self, account: str) -> u256:
+        user = normalize_address(account)
+        return self.balances.get(user, u256(0))
+
+    @gl.public.view
+    def allowance(self, owner: str, spender: str) -> u256:
+        ow = normalize_address(owner)
+        sp = normalize_address(spender)
+        if ow in self.allowances:
+            return self.allowances[ow].get(sp, u256(0))
+        return u256(0)
+
+    @gl.public.write
+    def transfer(self, to: str, amount: u256) -> bool:
+        sender = normalize_address(str(gl.message.sender_address))
+        recipient = normalize_address(to)
+        amt = int(amount)
+        if amt < 0:
+            raise gl.vm.UserError("[EXPECTED] Amount must be non-negative")
+        sender_bal = int(self.balances.get(sender, u256(0)))
+        if sender_bal < amt:
+            raise gl.vm.UserError("[EXPECTED] Insufficient aUSD balance")
+        self.balances[sender] = u256(sender_bal - amt)
+        recipient_bal = int(self.balances.get(recipient, u256(0)))
+        self.balances[recipient] = u256(recipient_bal + amt)
+        return True
+
+    @gl.public.write
+    def approve(self, spender: str, amount: u256) -> bool:
+        owner = normalize_address(str(gl.message.sender_address))
+        sp = normalize_address(spender)
+        if owner not in self.allowances:
+            self.allowances[owner] = TreeMap()
+        self.allowances[owner][sp] = amount
+        return True
+
+    @gl.public.write
+    def transfer_from(self, sender: str, recipient: str, amount: u256) -> bool:
+        caller = normalize_address(str(gl.message.sender_address))
+        from_addr = normalize_address(sender)
+        to_addr = normalize_address(recipient)
+        amt = int(amount)
+        if amt < 0:
+            raise gl.vm.UserError("[EXPECTED] Amount must be non-negative")
+
+        current_allowance = 0
+        if from_addr in self.allowances:
+            current_allowance = int(self.allowances[from_addr].get(caller, u256(0)))
+        if current_allowance < amt:
+            raise gl.vm.UserError("[EXPECTED] Insufficient allowance")
+
+        from_bal = int(self.balances.get(from_addr, u256(0)))
+        if from_bal < amt:
+            raise gl.vm.UserError("[EXPECTED] Insufficient aUSD balance")
+
+        self.allowances[from_addr][caller] = u256(current_allowance - amt)
+        self.balances[from_addr] = u256(from_bal - amt)
+        to_bal = int(self.balances.get(to_addr, u256(0)))
+        self.balances[to_addr] = u256(to_bal + amt)
+        return True
+
+    # --- Continuous Stability Fee Accrual ---
+
+    @gl.public.write
+    def accrue_interest(self) -> None:
+        now_ts = _get_current_timestamp()
+        last_ts = int(self.last_fee_update)
+        if last_ts == 0:
+            self.last_fee_update = u256(now_ts)
+            return
+        if now_ts <= last_ts:
+            return
+
+        delta_t = now_ts - last_ts
+        fee_bps = int(self.stability_fee_bps)
+        cur_factor = int(self.cumulative_interest_factor)
+        total_debt = int(self.total_minted)
+
+        factor_increase = (cur_factor * fee_bps * delta_t) // (10000 * SECONDS_PER_YEAR)
+        self.cumulative_interest_factor = u256(cur_factor + factor_increase)
+
+        if total_debt > 0:
+            interest_amount = (total_debt * fee_bps * delta_t) // (10000 * SECONDS_PER_YEAR)
+            self.total_minted = u256(total_debt + interest_amount)
+
+        self.last_fee_update = u256(now_ts)
+
+    def _get_user_debt(self, user: str) -> int:
+        principal = int(self.user_debt.get(user, u256(0)))
+        if principal == 0:
+            return 0
+        last_factor = int(self.user_last_factor.get(user, u256(10**18)))
+        if last_factor == 0:
+            last_factor = 10**18
+        cur_factor = int(self.cumulative_interest_factor)
+        if cur_factor < last_factor:
+            cur_factor = last_factor
+        return (principal * cur_factor) // last_factor
 
     def _is_solvent(self, col_amount: int, debt_amount: int) -> bool:
         if debt_amount <= 0:
@@ -47,49 +179,54 @@ class MonetaryPolicyContract(gl.Contract):
             return False
         price = int(self.asset_price_usd)
         cr = int(self.collateral_ratio)
-        col_scaled = col_amount // (10**18) if col_amount >= 10**14 else col_amount
-        debt_scaled = debt_amount // (10**18) if debt_amount >= 10**14 else debt_amount
-        col_val_usd = col_scaled * price
-        return (col_val_usd * 100) >= (debt_scaled * cr)
+        col_val_usd = col_amount * price
+        return (col_val_usd * 100) >= (debt_amount * cr)
+
+    # --- Autonomous AI Policy Rebalance & Validator Checked Price ---
 
     @gl.public.write
     def rebalance_policy(self) -> None:
         def leader_fn() -> dict:
-            price = DEFAULT_ETH_PRICE
+            price = int(self.asset_price_usd)
+            if price <= 0:
+                price = DEFAULT_GEN_PRICE
             change_24h = 0.0
-            volume_24h = 10_000_000_000.0
+            volume_24h = 10_000_000.0
 
             try:
-                web_res = gl.nondet.web.get(TELEMETRY_URL)
+                web_res = gl.nondet.web.get(GEN_TELEMETRY_URL)
                 raw_body = web_res.body
                 if isinstance(raw_body, bytes):
                     body_text = raw_body.decode("utf-8")
                 else:
                     body_text = str(raw_body)
                 telemetry = json.loads(body_text)
-                eth_data = telemetry.get("ethereum", {})
-                if "usd" in eth_data:
-                    price = int(float(eth_data["usd"]))
-                if "usd_24h_change" in eth_data:
-                    change_24h = float(eth_data["usd_24h_change"])
-                if "usd_24h_vol" in eth_data:
-                    volume_24h = float(eth_data["usd_24h_vol"])
+                gen_data = telemetry.get("genlayer", telemetry.get("gen", telemetry.get("ethereum", {})))
+                if "usd" in gen_data:
+                    price = int(float(gen_data["usd"]))
+                if "usd_24h_change" in gen_data:
+                    change_24h = float(gen_data["usd_24h_change"])
+                if "usd_24h_vol" in gen_data:
+                    volume_24h = float(gen_data["usd_24h_vol"])
             except Exception:
                 price = int(self.asset_price_usd)
+                if price <= 0:
+                    price = DEFAULT_GEN_PRICE
 
             prompt = (
                 "You are the autonomous monetary policy engine for an intelligent algorithmic stablecoin on GenLayer.\\n"
                 "Analyze the following real-time market risk metrics:\\n"
-                f"- Asset: ETH/USD\\n"
+                f"- Asset: GEN/USD\\n"
                 f"- Live Price: ${price}\\n"
                 f"- 24h Price Change: {change_24h:.2f}%\\n"
                 f"- 24h Trading Volume: ${volume_24h:.0f}\\n\\n"
                 "Evaluate tail-risk, volatility, and downward price action to recommend protocol parameters:\\n"
-                "1. new_cr: Minimum collateral ratio (e.g. 150 for 150%). Range: 120 to 200.\\n"
-                "2. new_fee_bps: Stability borrow fee in basis points (e.g. 300 for 3.00%). Range: 150 to 1200.\\n"
-                "3. rationale: A concise macroeconomic explanation justifying these rate changes.\\n\\n"
+                "1. gen_price_usd: Validator-verified GEN market price (integer USD).\\n"
+                "2. new_cr: Minimum collateral ratio (e.g. 150 for 150%). Range: 120 to 200.\\n"
+                "3. new_fee_bps: Stability borrow fee in basis points (e.g. 300 for 3.00%). Range: 150 to 1200.\\n"
+                "4. rationale: A concise macroeconomic explanation justifying these rate changes.\\n\\n"
                 "Respond with strictly valid JSON:\\n"
-                '{"new_cr": <int>, "new_fee_bps": <int>, "rationale": "<string>"}'
+                '{"gen_price_usd": <int>, "new_cr": <int>, "new_fee_bps": <int>, "rationale": "<string>"}'
             )
 
             llm_res = gl.nondet.exec_prompt(prompt, response_format="json")
@@ -101,9 +238,15 @@ class MonetaryPolicyContract(gl.Contract):
             else:
                 raise gl.vm.UserError("[LLM_ERROR] Invalid LLM response format")
 
+            raw_price = parsed.get("gen_price_usd", parsed.get("price", price))
             raw_cr = parsed.get("new_cr", parsed.get("collateral_ratio", 150))
             raw_fee = parsed.get("new_fee_bps", parsed.get("stability_fee_bps", 300))
             rationale_text = str(parsed.get("rationale", parsed.get("reasoning", "Adaptive policy updated.")))
+
+            try:
+                price_val = int(round(float(str(raw_price).strip())))
+            except (ValueError, TypeError):
+                price_val = price
 
             try:
                 cr_val = int(round(float(str(raw_cr).strip())))
@@ -118,12 +261,13 @@ class MonetaryPolicyContract(gl.Contract):
             # Circuit breakers
             clamped_cr = max(120, min(200, cr_val))
             clamped_fee = max(150, min(1200, fee_val))
+            final_price = max(1, price_val)
 
             return {
+                "gen_price_usd": final_price,
                 "new_cr": clamped_cr,
                 "new_fee_bps": clamped_fee,
                 "rationale": rationale_text[:500],
-                "price": price,
             }
 
         def validator_fn(leader_res: gl.vm.Result) -> bool:
@@ -135,12 +279,14 @@ class MonetaryPolicyContract(gl.Contract):
 
             validator_data = leader_fn()
 
+            l_price = leader_data.get("gen_price_usd")
+            v_price = validator_data.get("gen_price_usd")
             l_cr = leader_data.get("new_cr")
             v_cr = validator_data.get("new_cr")
             l_fee = leader_data.get("new_fee_bps")
             v_fee = validator_data.get("new_fee_bps")
 
-            if l_cr is None or v_cr is None or l_fee is None or v_fee is None:
+            if l_price is None or v_price is None or l_cr is None or v_cr is None or l_fee is None or v_fee is None:
                 return False
 
             # Circuit breaker bounds check
@@ -148,8 +294,16 @@ class MonetaryPolicyContract(gl.Contract):
                 return False
             if not (150 <= l_fee <= 1200 and 150 <= v_fee <= 1200):
                 return False
+            if l_price <= 0 or v_price <= 0:
+                return False
 
-            # Equivalence tolerance check
+            # Validator price verification: difference must be within +/- 2%
+            # |l_price - v_price| * 100 <= v_price * 2
+            price_diff = abs(int(l_price) - int(v_price))
+            if price_diff * 100 > int(v_price) * 2:
+                return False
+
+            # Equivalence tolerance checks
             if abs(l_cr - v_cr) > 15:
                 return False
             if abs(l_fee - v_fee) > 150:
@@ -158,20 +312,24 @@ class MonetaryPolicyContract(gl.Contract):
             return True
 
         decision = gl.vm.run_nondet_unsafe(leader_fn, validator_fn)
+        self.accrue_interest()
         self.collateral_ratio = u256(decision["new_cr"])
         self.stability_fee_bps = u256(decision["new_fee_bps"])
         self.last_reasoning = decision["rationale"]
-        if decision.get("price") and decision["price"] > 0:
-            self.asset_price_usd = u256(decision["price"])
+        if decision.get("gen_price_usd") and decision["gen_price_usd"] > 0:
+            self.asset_price_usd = u256(decision["gen_price_usd"])
+
+    # --- Vault Operations ---
 
     @gl.public.write.payable
     def deposit_and_mint(self, amount_to_mint: u256) -> None:
+        self.accrue_interest()
         user = normalize_address(str(gl.message.sender_address))
         deposited = int(gl.message.value)
         mint_amount = int(amount_to_mint)
 
         current_col = int(self.user_collateral.get(user, u256(0)))
-        current_debt = int(self.user_debt.get(user, u256(0)))
+        current_debt = self._get_user_debt(user)
 
         new_col = current_col + deposited
         if new_col <= 0:
@@ -186,11 +344,17 @@ class MonetaryPolicyContract(gl.Contract):
 
         self.user_collateral[user] = u256(new_col)
         self.user_debt[user] = u256(new_debt)
+        self.user_last_factor[user] = self.cumulative_interest_factor
         self.total_collateral = u256(int(self.total_collateral) + deposited)
         self.total_minted = u256(int(self.total_minted) + mint_amount)
 
+        # Credit aUSD balance to user
+        cur_bal = int(self.balances.get(user, u256(0)))
+        self.balances[user] = u256(cur_bal + mint_amount)
+
     @gl.public.write
     def repay_and_withdraw(self, burn_amount: u256, withdraw_amount: u256) -> None:
+        self.accrue_interest()
         user = normalize_address(str(gl.message.sender_address))
         burn_val = int(burn_amount)
         withdraw_val = int(withdraw_amount)
@@ -198,7 +362,7 @@ class MonetaryPolicyContract(gl.Contract):
         if burn_val < 0 or withdraw_val < 0:
             raise gl.vm.UserError("[EXPECTED] Amounts must be non-negative")
 
-        current_debt = int(self.user_debt.get(user, u256(0)))
+        current_debt = self._get_user_debt(user)
         current_col = int(self.user_collateral.get(user, u256(0)))
 
         if burn_val > current_debt:
@@ -206,19 +370,116 @@ class MonetaryPolicyContract(gl.Contract):
         if withdraw_val > current_col:
             raise gl.vm.UserError("[EXPECTED] Withdraw amount exceeds user collateral")
 
+        # Verify user has enough aUSD balance to burn
+        user_bal = int(self.balances.get(user, u256(0)))
+        if burn_val > user_bal:
+            raise gl.vm.UserError("[EXPECTED] Insufficient aUSD balance to repay debt")
+
         remaining_debt = current_debt - burn_val
         remaining_col = current_col - withdraw_val
 
         if remaining_debt > 0 and not self._is_solvent(remaining_col, remaining_debt):
             raise gl.vm.UserError("[EXPECTED] Insolvent: remaining collateral does not satisfy required collateral ratio")
 
+        # Burn aUSD tokens
+        self.balances[user] = u256(user_bal - burn_val)
         self.user_debt[user] = u256(remaining_debt)
+        self.user_last_factor[user] = self.cumulative_interest_factor
         self.user_collateral[user] = u256(remaining_col)
         self.total_collateral = u256(int(self.total_collateral) - withdraw_val)
         self.total_minted = u256(int(self.total_minted) - burn_val)
 
         if withdraw_val > 0:
             _Recipient(gl.message.sender_address).emit_transfer(value=u256(withdraw_val))
+
+    # --- Liquidation Engine (10% Bonus) ---
+
+    @gl.public.write
+    def liquidate(self, borrower: str, debt_to_cover: u256) -> str:
+        self.accrue_interest()
+        liquidator = normalize_address(str(gl.message.sender_address))
+        borrower_addr = normalize_address(borrower)
+        cover_amt = int(debt_to_cover)
+
+        if cover_amt <= 0:
+            raise gl.vm.UserError("[EXPECTED] Debt to cover must be positive")
+
+        borrower_debt = self._get_user_debt(borrower_addr)
+        borrower_col = int(self.user_collateral.get(borrower_addr, u256(0)))
+
+        if borrower_debt == 0:
+            raise gl.vm.UserError("[EXPECTED] Borrower has no debt to liquidate")
+
+        # Check if borrower is unsafe: (collateral_usd * 100) < (borrower_debt * collateral_ratio)
+        price = int(self.asset_price_usd)
+        cr = int(self.collateral_ratio)
+        col_val_usd = borrower_col * price
+        if (col_val_usd * 100) >= (borrower_debt * cr):
+            raise gl.vm.UserError("[EXPECTED] Borrower position is solvent, cannot liquidate")
+
+        actual_cover = min(cover_amt, borrower_debt)
+
+        # Liquidator burns their own aUSD
+        liquidator_bal = int(self.balances.get(liquidator, u256(0)))
+        if liquidator_bal < actual_cover:
+            raise gl.vm.UserError("[EXPECTED] Liquidator has insufficient aUSD balance")
+
+        # Seized GEN = (debt_to_cover * 1.10) / gen_price_usd
+        # in integer math: (actual_cover * 110) // (100 * price)
+        seized_gen = (actual_cover * 110) // (100 * price)
+        if seized_gen > borrower_col:
+            seized_gen = borrower_col
+
+        self.balances[liquidator] = u256(liquidator_bal - actual_cover)
+
+        new_borrower_debt = borrower_debt - actual_cover
+        new_borrower_col = borrower_col - seized_gen
+        self.user_debt[borrower_addr] = u256(new_borrower_debt)
+        self.user_last_factor[borrower_addr] = self.cumulative_interest_factor
+        self.user_collateral[borrower_addr] = u256(new_borrower_col)
+
+        self.total_collateral = u256(int(self.total_collateral) - seized_gen)
+        self.total_minted = u256(int(self.total_minted) - actual_cover)
+
+        if seized_gen > 0:
+            _Recipient(gl.message.sender_address).emit_transfer(value=u256(seized_gen))
+
+        return f"Liquidated {actual_cover} debt of {borrower_addr}. Seized {seized_gen} GEN collateral with 10% bonus."
+
+    # --- Hard Peg Defense Mechanism (Redeem at $1.00 USD) ---
+
+    @gl.public.write
+    def redeem(self, ausd_amount: u256) -> str:
+        self.accrue_interest()
+        redeemer = normalize_address(str(gl.message.sender_address))
+        burn_amt = int(ausd_amount)
+
+        if burn_amt <= 0:
+            raise gl.vm.UserError("[EXPECTED] Redeem amount must be positive")
+
+        user_bal = int(self.balances.get(redeemer, u256(0)))
+        if user_bal < burn_amt:
+            raise gl.vm.UserError("[EXPECTED] Insufficient aUSD balance to redeem")
+
+        # Redeem $1.00 USD worth of GEN minus 0.5% redemption fee
+        # payout_gen = (burn_amt * 0.995) / price = (burn_amt * 995) // (1000 * price)
+        price = int(self.asset_price_usd)
+        gen_payout = (burn_amt * 995) // (1000 * price)
+
+        tot_col = int(self.total_collateral)
+        if gen_payout > tot_col:
+            raise gl.vm.UserError("[EXPECTED] Insufficient protocol collateral reserves for redemption")
+
+        self.balances[redeemer] = u256(user_bal - burn_amt)
+        self.total_minted = u256(int(self.total_minted) - burn_amt)
+        self.total_collateral = u256(tot_col - gen_payout)
+
+        if gen_payout > 0:
+            _Recipient(gl.message.sender_address).emit_transfer(value=u256(gen_payout))
+
+        return f"Redeemed {burn_amt} aUSD for {gen_payout} GEN collateral at $1.00 peg."
+
+    # --- Views ---
 
     @gl.public.view
     def get_state(self) -> dict:
@@ -229,22 +490,22 @@ class MonetaryPolicyContract(gl.Contract):
             "total_minted": int(self.total_minted),
             "total_collateral": int(self.total_collateral),
             "asset_price_usd": int(self.asset_price_usd),
+            "last_fee_update": int(self.last_fee_update),
+            "cumulative_interest_factor": int(self.cumulative_interest_factor),
         }
 
     @gl.public.view
     def get_user_position(self, user_address: str) -> dict:
         user = normalize_address(user_address)
         col = int(self.user_collateral.get(user, u256(0)))
-        debt = int(self.user_debt.get(user, u256(0)))
+        debt = self._get_user_debt(user)
         price = int(self.asset_price_usd)
         cr = int(self.collateral_ratio)
 
-        col_scaled = col // (10**18) if col >= 10**14 else col
-        debt_scaled = debt // (10**18) if debt >= 10**14 else debt
-        col_usd = col_scaled * price
-
-        max_debt = (col_usd * 100) // cr if cr > 0 else 0
-        current_cr_bps = (col_usd * 10000) // debt_scaled if debt_scaled > 0 else 0
+        col_usd = (col * price) // (10**18)
+        max_debt = (col * price * 100) // cr if cr > 0 else 0
+        current_cr_bps = (col * price * 10000) // debt if debt > 0 else 0
+        ausd_balance = int(self.balances.get(user, u256(0)))
 
         return {
             "user": user,
@@ -254,4 +515,5 @@ class MonetaryPolicyContract(gl.Contract):
             "max_debt": max_debt,
             "current_cr_bps": current_cr_bps,
             "is_solvent": self._is_solvent(col, debt),
+            "ausd_balance": ausd_balance,
         }
