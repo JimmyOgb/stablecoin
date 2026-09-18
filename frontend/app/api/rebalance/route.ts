@@ -1,10 +1,9 @@
 import { NextResponse } from "next/server";
+import { createAccount, generatePrivateKey } from "genlayer-js";
 import {
   getClient,
   getProtocolState,
   CONTRACT_ADDRESS,
-  createAccount,
-  generatePrivateKey,
 } from "@/lib/genlayer";
 
 export const dynamic = "force-dynamic";

@@ -1,17 +1,21 @@
-import { createClient, createAccount, generatePrivateKey, chains } from "genlayer-js";
+import { createClient, chains } from "genlayer-js";
 
 export const CONTRACT_ADDRESS = (process.env.NEXT_PUBLIC_CONTRACT_ADDRESS ||
-  "0xf7908d23780bA6fd489B5835f13143c5aF15Fe06") as `0x${string}`;
+  "0xd620F2Fb7908B9e1A83fA439fF7b4e40638Fa2a0") as `0x${string}`;
 
 export const RPC_URL =
   process.env.NEXT_PUBLIC_GENLAYER_RPC_URL || "https://studio.genlayer.com/api";
 
 export interface ProtocolState {
   collateral_ratio: number;
+  mint_collateral_ratio?: number;
+  liquidation_ratio?: number;
   stability_fee_bps: number;
   last_reasoning: string;
   total_minted: number;
   total_collateral: number;
+  total_collateral_usd?: number;
+  solvency_ratio_bps?: number;
   asset_price_usd: number;
   last_fee_update?: number;
   cumulative_interest_factor?: number;
@@ -24,16 +28,21 @@ export interface UserPosition {
   debt: number | string;
   max_debt: number | string;
   current_cr_bps: number;
+  mint_collateral_ratio?: number;
+  liquidation_ratio?: number;
   is_solvent: boolean;
+  is_liquidatable?: boolean;
   ausd_balance?: number | string;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function getClient(account?: any) {
+export function getClient(accountOrAddress?: any, provider?: any) {
   return createClient({
     chain: chains.studionet,
     endpoint: RPC_URL,
-    account: account || undefined,
+    account: accountOrAddress || undefined,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    provider: provider || (typeof window !== "undefined" ? (window as any).ethereum : undefined),
   });
 }
 
@@ -66,5 +75,3 @@ export async function getAusdBalance(address: string): Promise<number | string> 
   });
   return balance as unknown as (number | string);
 }
-
-export { createAccount, generatePrivateKey };

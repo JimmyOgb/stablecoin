@@ -8,8 +8,6 @@ import {
   getProtocolState,
   getUserPosition,
   getClient,
-  createAccount,
-  generatePrivateKey,
   CONTRACT_ADDRESS,
   RPC_URL,
   type ProtocolState,
@@ -46,13 +44,9 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Fallback / Session key account for gasless testing
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [sessionAccount, setSessionAccount] = useState<any>(null);
+  // Strictly use connected Web3 wallet address - NO silent burner key fallback
+  const activeAddress = wagmiAddress;
   const [copiedAddress, setCopiedAddress] = useState(false);
-
-  // Active address: prioritize Wagmi connected wallet, fallback to session account
-  const activeAddress = wagmiAddress || sessionAccount?.address;
 
   // Form states
   const [depositAmount, setDepositAmount] = useState<string>("0.5");
@@ -107,20 +101,30 @@ export default function Home() {
     }
   };
 
-  // Initialize session key
-  useEffect(() => {
-    try {
-      let key = localStorage.getItem("genlayer_stablecoin_key");
-      if (!key) {
-        key = generatePrivateKey();
-        localStorage.setItem("genlayer_stablecoin_key", key);
-      }
-      const acc = createAccount(key as `0x${string}`);
-      setSessionAccount(acc);
-    } catch (e) {
-      console.error("Account init error:", e);
+  // Verify transaction execution result to prevent showing success on reverts
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const verifyExecution = (receipt: any) => {
+    if (receipt?.statusName && !["ACCEPTED", "FINALIZED", "READY_TO_FINALIZE"].includes(receipt.statusName)) {
+      throw new Error(`Transaction not accepted by consensus. Status: ${receipt.statusName}`);
     }
-  }, []);
+    const execStatus = receipt?.execution_result?.status || receipt?.txExecutionResultName;
+    const isError =
+      execStatus === "ERROR" ||
+      execStatus === "REVERT" ||
+      execStatus === "FAILURE" ||
+      receipt?.txExecutionResultName === "FINISHED_WITH_ERROR" ||
+      receipt?.txExecutionResult === 2;
+
+    if (isError) {
+      const errDetail =
+        receipt?.execution_result?.error ||
+        receipt?.execution_result?.revert_reason ||
+        receipt?.execution_result?.message ||
+        receipt?.revertReason ||
+        "Transaction reverted on-chain during execution";
+      throw new Error(`On-Chain Execution Revert: ${errDetail}`);
+    }
+  };
 
   const fetchData = useCallback(async () => {
     try {
@@ -149,7 +153,10 @@ export default function Home() {
 
   // AI Consensus Policy Rebalance Trigger
   const handleRebalance = async () => {
-    if (!sessionAccount && !isConnected) return;
+    if (!isConnected || !wagmiAddress) {
+      setError("Please connect your Web3 wallet to proceed.");
+      return;
+    }
     setIsProcessing(true);
     setActionStatus("Broadcasting AI Consensus Rebalance transaction...");
     setConsensusStage("submitting");
@@ -158,7 +165,7 @@ export default function Home() {
     setError(null);
 
     try {
-      const client = getClient(sessionAccount);
+      const client = getClient(wagmiAddress, typeof window !== "undefined" ? (window as any).ethereum : undefined);
 
       const txHash = await client.writeContract({
         address: CONTRACT_ADDRESS,
@@ -183,6 +190,8 @@ export default function Home() {
       });
 
       clearTimeout(revealTimer);
+      verifyExecution(receipt);
+
       setConsensusStage("accepted");
       setActionStatus(`Stage 3/3: Consensus Reached! Status: ${receipt?.statusName || "ACCEPTED"}`);
       setSuccessMessage("Monetary policy successfully rebalanced with validator-checked GEN price!");
@@ -200,16 +209,19 @@ export default function Home() {
   // Deposit Collateral (GEN) & Borrow aUSD
   const handleDepositAndMint = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!sessionAccount && !isConnected) return;
+    if (!isConnected || !wagmiAddress) {
+      setError("Please connect your Web3 wallet to proceed.");
+      return;
+    }
     setIsProcessing(true);
-    setActionStatus("Submitting collateral deposit & aUSD mint request...");
+    setActionStatus("Submitting collateral deposit & aUSD mint request via connected wallet...");
     setConsensusStage("submitting");
     setError(null);
     setLastTxHash(null);
     setSuccessMessage(null);
 
     try {
-      const client = getClient(sessionAccount);
+      const client = getClient(wagmiAddress, typeof window !== "undefined" ? (window as any).ethereum : undefined);
       const weiValue = parseEther(depositAmount || "0");
       const aUsdToMintWei = parseEther(mintAmount || "0");
 
@@ -236,6 +248,8 @@ export default function Home() {
       });
 
       clearTimeout(timer);
+      verifyExecution(receipt);
+
       setConsensusStage("accepted");
       setActionStatus(`Transaction finalized: ${receipt?.statusName || "ACCEPTED"}`);
       setSuccessMessage(`Vault deposit confirmed! Minted ${mintAmount} aUSD into your wallet against ${depositAmount} GEN.`);
@@ -253,16 +267,19 @@ export default function Home() {
   // Repay aUSD & Withdraw Collateral (GEN)
   const handleRepayAndWithdraw = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!sessionAccount && !isConnected) return;
+    if (!isConnected || !wagmiAddress) {
+      setError("Please connect your Web3 wallet to proceed.");
+      return;
+    }
     setIsProcessing(true);
-    setActionStatus("Submitting debt repayment & withdrawal...");
+    setActionStatus("Submitting debt repayment & withdrawal via connected wallet...");
     setConsensusStage("submitting");
     setError(null);
     setLastTxHash(null);
     setSuccessMessage(null);
 
     try {
-      const client = getClient(sessionAccount);
+      const client = getClient(wagmiAddress, typeof window !== "undefined" ? (window as any).ethereum : undefined);
       const burnWei = parseEther(burnAmount || "0");
       const withdrawWei = parseEther(withdrawAmount || "0");
 
@@ -289,6 +306,8 @@ export default function Home() {
       });
 
       clearTimeout(timer);
+      verifyExecution(receipt);
+
       setConsensusStage("accepted");
       setActionStatus(`Repay & Withdraw confirmed (${receipt?.statusName || "ACCEPTED"})`);
       setSuccessMessage(`Burned ${burnAmount} aUSD and unlocked ${withdrawAmount} GEN collateral!`);
@@ -321,7 +340,10 @@ export default function Home() {
   // Execute Liquidation with 10% Bonus
   const handleLiquidate = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!sessionAccount && !isConnected) return;
+    if (!isConnected || !wagmiAddress) {
+      setError("Please connect your Web3 wallet to proceed.");
+      return;
+    }
     if (!liquidateBorrower) return;
 
     setIsProcessing(true);
@@ -332,7 +354,7 @@ export default function Home() {
     setSuccessMessage(null);
 
     try {
-      const client = getClient(sessionAccount);
+      const client = getClient(wagmiAddress, typeof window !== "undefined" ? (window as any).ethereum : undefined);
       const debtToCoverWei = parseEther(liquidateDebt || "0");
 
       const txHash = await client.writeContract({
@@ -351,6 +373,8 @@ export default function Home() {
         retries: 60,
         interval: 3000,
       });
+
+      verifyExecution(receipt);
 
       setConsensusStage("accepted");
       setActionStatus(`Liquidation confirmed (${receipt?.statusName || "ACCEPTED"})`);
@@ -372,7 +396,10 @@ export default function Home() {
   // Execute Peg Arbitrage Redemption ($1.00 USD)
   const handleRedeem = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!sessionAccount && !isConnected) return;
+    if (!isConnected || !wagmiAddress) {
+      setError("Please connect your Web3 wallet to proceed.");
+      return;
+    }
     setIsProcessing(true);
     setActionStatus("Executing Peg Arbitrage Redemption ($1.00 USD of GEN per aUSD)...");
     setConsensusStage("submitting");
@@ -381,7 +408,7 @@ export default function Home() {
     setSuccessMessage(null);
 
     try {
-      const client = getClient(sessionAccount);
+      const client = getClient(wagmiAddress, typeof window !== "undefined" ? (window as any).ethereum : undefined);
       const redeemWei = parseEther(redeemAmount || "0");
 
       const txHash = await client.writeContract({
@@ -401,6 +428,8 @@ export default function Home() {
         interval: 3000,
       });
 
+      verifyExecution(receipt);
+
       setConsensusStage("accepted");
       setActionStatus(`Peg Redemption confirmed (${receipt?.statusName || "ACCEPTED"})`);
       setSuccessMessage(`Redeemed ${redeemAmount} aUSD for GEN collateral at $1.00 peg floor!`);
@@ -418,7 +447,10 @@ export default function Home() {
   // Transfer aUSD to another account
   const handleTransferAusd = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!sessionAccount && !isConnected) return;
+    if (!isConnected || !wagmiAddress) {
+      setError("Please connect your Web3 wallet to proceed.");
+      return;
+    }
     if (!transferRecipient) return;
 
     setIsProcessing(true);
@@ -429,7 +461,7 @@ export default function Home() {
     setSuccessMessage(null);
 
     try {
-      const client = getClient(sessionAccount);
+      const client = getClient(wagmiAddress, typeof window !== "undefined" ? (window as any).ethereum : undefined);
       const amountWei = parseEther(transferAmount || "0");
 
       const txHash = await client.writeContract({
@@ -448,6 +480,8 @@ export default function Home() {
         retries: 60,
         interval: 3000,
       });
+
+      verifyExecution(receipt);
 
       setConsensusStage("accepted");
       setActionStatus(`Transfer confirmed (${receipt?.statusName || "ACCEPTED"})`);
@@ -495,11 +529,13 @@ export default function Home() {
 
   // Solvency calculations for active input
   const currentGenPrice = protocolState?.asset_price_usd || 2500;
-  const currentCr = protocolState?.collateral_ratio || 150;
+  const currentMintCr = protocolState?.mint_collateral_ratio || protocolState?.collateral_ratio || 150;
+  const liquidationCr = protocolState?.liquidation_ratio || 130;
+  const currentCr = currentMintCr;
   const inputGen = parseFloat(depositAmount || "0");
   const inputUsdCol = inputGen * currentGenPrice;
   const inputMint = parseFloat(mintAmount || "0");
-  const maxSafeMint = (inputUsdCol * 100) / currentCr;
+  const maxSafeMint = (inputUsdCol * 100) / currentMintCr;
   const simulatedRatio = inputMint > 0 ? ((inputUsdCol * 100) / inputMint).toFixed(1) : "∞";
   const isSimulationSolvent = inputMint <= maxSafeMint;
 
@@ -675,11 +711,25 @@ export default function Home() {
                 <div className="pt-2">
                   <button
                     type="submit"
-                    disabled={isProcessing}
+                    disabled={!isConnected || isProcessing}
                     className="w-full py-3 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 disabled:opacity-50 text-sm font-bold text-white transition-all shadow-md flex items-center justify-center space-x-2"
                   >
-                    {isProcessing ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                    <span>Confirm aUSD Transfer</span>
+                    {!isConnected ? (
+                      <>
+                        <Wallet className="w-4 h-4" />
+                        <span>Connect Wallet to Proceed</span>
+                      </>
+                    ) : isProcessing ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>Transferring...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Send className="w-4 h-4" />
+                        <span>Confirm aUSD Transfer</span>
+                      </>
+                    )}
                   </button>
                 </div>
               </form>
@@ -785,20 +835,70 @@ export default function Home() {
             </button>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             <div className="rounded-2xl bg-gradient-to-b from-slate-900 to-slate-900/60 border border-slate-800 p-5">
               <div className="flex items-center justify-between text-slate-400 text-xs font-medium">
-                <span>AI Collateral Ratio</span>
+                <span>Mint Collateral Ratio</span>
                 <ShieldCheck className="w-4 h-4 text-indigo-400" />
               </div>
               <div className="mt-3 flex items-baseline space-x-2">
                 <span className="text-3xl font-extrabold text-white">
-                  {protocolState ? `${protocolState.collateral_ratio}%` : "150%"}
+                  {protocolState ? `${protocolState.mint_collateral_ratio ?? protocolState.collateral_ratio}%` : "150%"}
                 </span>
-                <span className="text-xs text-emerald-400 font-medium">Bounds: 120-200%</span>
+                <span className="text-xs text-emerald-400 font-medium">Safe Mint Floor</span>
               </div>
               <p className="mt-2 text-[11px] text-slate-500">
-                Dynamically governed by validator LLM deliberation based on live market volatility.
+                Minimum collateral ratio required to open or expand vault debt. Dynamically governed by AI consensus.
+              </p>
+            </div>
+
+            <div className="rounded-2xl bg-gradient-to-b from-slate-900 to-slate-900/60 border border-slate-800 p-5">
+              <div className="flex items-center justify-between text-slate-400 text-xs font-medium">
+                <span>Liquidation Threshold</span>
+                <AlertTriangle className="w-4 h-4 text-amber-400" />
+              </div>
+              <div className="mt-3 flex items-baseline space-x-2">
+                <span className="text-3xl font-extrabold text-white">
+                  {protocolState ? `${protocolState.liquidation_ratio ?? 130}%` : "130%"}
+                </span>
+                <span className="text-xs text-amber-400 font-medium">20% Safety Buffer</span>
+              </div>
+              <p className="mt-2 text-[11px] text-slate-500">
+                Vaults falling below 130% become liquidatable with a 10% bonus paid to the liquidator.
+              </p>
+            </div>
+
+            <div className="rounded-2xl bg-gradient-to-b from-slate-900 to-slate-900/60 border border-slate-800 p-5">
+              <div className="flex items-center justify-between text-slate-400 text-xs font-medium">
+                <span>Global Protocol Solvency</span>
+                <Scale className="w-4 h-4 text-purple-400" />
+              </div>
+              <div className="mt-3 flex items-baseline space-x-2">
+                <span className="text-3xl font-extrabold text-white">
+                  {protocolState?.solvency_ratio_bps && protocolState.solvency_ratio_bps > 0
+                    ? `${(protocolState.solvency_ratio_bps / 100).toFixed(1)}%`
+                    : (Number(protocolState?.total_minted || 0) === 0 ? "100.0%" : "N/A")}
+                </span>
+                <span className="text-xs text-emerald-400 font-medium">Reserves / Debt</span>
+              </div>
+              <p className="mt-2 text-[11px] text-slate-500">
+                Real-time protocol-wide collateralization. Redemptions require &ge;110% global solvency.
+              </p>
+            </div>
+
+            <div className="rounded-2xl bg-gradient-to-b from-slate-900 to-slate-900/60 border border-slate-800 p-5">
+              <div className="flex items-center justify-between text-slate-400 text-xs font-medium">
+                <span>Validator GEN Price</span>
+                <ArrowDownUp className="w-4 h-4 text-emerald-400" />
+              </div>
+              <div className="mt-3 flex items-baseline space-x-2">
+                <span className="text-3xl font-extrabold text-white font-mono">
+                  ${protocolState ? protocolState.asset_price_usd.toLocaleString() : "2,500"}
+                </span>
+                <span className="text-xs text-emerald-400 font-medium">±2% Equivalence</span>
+              </div>
+              <p className="mt-2 text-[11px] text-slate-500">
+                Validator-verified GEN/USD telemetry. Disagreements &gt;2% are rejected by consensus.
               </p>
             </div>
 
@@ -817,22 +917,6 @@ export default function Home() {
               </div>
               <p className="mt-2 text-[11px] text-slate-500">
                 Continuous interest accrual clamped between 150 bps (1.5%) and 1200 bps (12.0%).
-              </p>
-            </div>
-
-            <div className="rounded-2xl bg-gradient-to-b from-slate-900 to-slate-900/60 border border-slate-800 p-5">
-              <div className="flex items-center justify-between text-slate-400 text-xs font-medium">
-                <span>Validator GEN Price</span>
-                <ArrowDownUp className="w-4 h-4 text-emerald-400" />
-              </div>
-              <div className="mt-3 flex items-baseline space-x-2">
-                <span className="text-3xl font-extrabold text-white font-mono">
-                  ${protocolState ? protocolState.asset_price_usd.toLocaleString() : "2,500"}
-                </span>
-                <span className="text-xs text-emerald-400 font-medium">±2% Tolerance</span>
-              </div>
-              <p className="mt-2 text-[11px] text-slate-500">
-                Validator-verified GEN/USD telemetry. Disagreements &gt;2% are rejected by consensus.
               </p>
             </div>
 
@@ -866,11 +950,11 @@ export default function Home() {
               <div className="flex items-center space-x-2">
                 <button
                   onClick={handleRebalance}
-                  disabled={isProcessing}
+                  disabled={!isConnected || isProcessing}
                   className="inline-flex items-center space-x-2 px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-xs font-semibold text-white transition-all shadow-md shadow-indigo-600/20"
                 >
                   <Sparkles className="w-3.5 h-3.5" />
-                  <span>Trigger AI Rebalance</span>
+                  <span>{!isConnected ? "Connect Wallet to Rebalance" : isProcessing ? "Rebalancing..." : "Trigger AI Rebalance"}</span>
                 </button>
 
                 <button
@@ -963,6 +1047,13 @@ export default function Home() {
                   </span>
                 </div>
 
+                <div className="flex justify-between py-1 text-xs text-slate-500">
+                  <span>Mint CR / Liq Threshold:</span>
+                  <span className="font-mono text-slate-400">
+                    {currentMintCr}% / {liquidationCr}% (20% Buffer)
+                  </span>
+                </div>
+
                 <div className="flex justify-between py-1 pt-2 border-t border-slate-800/80">
                   <span className="text-slate-400">Wallet aUSD Asset</span>
                   <span className="font-mono font-semibold text-emerald-400">
@@ -981,7 +1072,7 @@ export default function Home() {
                     ) : (
                       <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0" />
                     )}
-                    <span>Simulated CR: <strong>{simulatedRatio}%</strong> (Req: {currentCr}%)</span>
+                    <span>Simulated CR: <strong>{simulatedRatio}%</strong> (Req: {currentMintCr}%)</span>
                   </div>
                   <span className={`font-semibold ${isSimulationSolvent ? "text-emerald-400" : "text-red-400"}`}>
                     {isSimulationSolvent ? "Solvent" : "Undercollateralized"}
@@ -1080,17 +1171,22 @@ export default function Home() {
                       <span className="absolute right-4 top-3.5 text-sm font-semibold text-purple-400">aUSD</span>
                     </div>
                     <div className="flex justify-between items-center text-[11px] text-slate-500 mt-1">
-                      <span>Maximum safe borrow at {currentCr}% CR:</span>
+                      <span>Maximum safe borrow at {currentMintCr}% CR:</span>
                       <span className="font-mono text-slate-300">${maxSafeMint.toFixed(2)} aUSD</span>
                     </div>
                   </div>
 
                   <button
                     type="submit"
-                    disabled={isProcessing || !isSimulationSolvent}
+                    disabled={!isConnected || isProcessing || !isSimulationSolvent}
                     className="w-full py-3.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 disabled:opacity-50 text-sm font-bold text-white transition-all shadow-lg shadow-indigo-600/25 flex items-center justify-center space-x-2"
                   >
-                    {isProcessing ? (
+                    {!isConnected ? (
+                      <>
+                        <Wallet className="w-4 h-4" />
+                        <span>Connect Wallet to Proceed</span>
+                      </>
+                    ) : isProcessing ? (
                       <>
                         <RefreshCw className="w-4 h-4 animate-spin" />
                         <span>Awaiting Validator Consensus (up to 180s)...</span>
@@ -1154,10 +1250,15 @@ export default function Home() {
 
                   <button
                     type="submit"
-                    disabled={isProcessing}
+                    disabled={!isConnected || isProcessing}
                     className="w-full py-3.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 disabled:opacity-50 text-sm font-bold text-white transition-all shadow-lg shadow-purple-600/25 flex items-center justify-center space-x-2"
                   >
-                    {isProcessing ? (
+                    {!isConnected ? (
+                      <>
+                        <Wallet className="w-4 h-4" />
+                        <span>Connect Wallet to Proceed</span>
+                      </>
+                    ) : isProcessing ? (
                       <>
                         <RefreshCw className="w-4 h-4 animate-spin" />
                         <span>Awaiting Validator Consensus (up to 180s)...</span>
@@ -1265,10 +1366,15 @@ export default function Home() {
 
                     <button
                       type="submit"
-                      disabled={isProcessing || !liquidateBorrower}
+                      disabled={!isConnected || isProcessing || !liquidateBorrower}
                       className="w-full py-3.5 rounded-xl bg-gradient-to-r from-red-600 to-indigo-600 hover:from-red-500 hover:to-indigo-500 disabled:opacity-50 text-sm font-bold text-white transition-all shadow-lg shadow-red-600/25 flex items-center justify-center space-x-2"
                     >
-                      {isProcessing ? (
+                      {!isConnected ? (
+                        <>
+                          <Wallet className="w-4 h-4" />
+                          <span>Connect Wallet to Proceed</span>
+                        </>
+                      ) : isProcessing ? (
                         <>
                           <RefreshCw className="w-4 h-4 animate-spin" />
                           <span>Awaiting Validator Consensus (up to 180s)...</span>
@@ -1347,10 +1453,15 @@ export default function Home() {
 
                     <button
                       type="submit"
-                      disabled={isProcessing || !redeemAmount}
+                      disabled={!isConnected || isProcessing || !redeemAmount}
                       className="w-full py-3.5 rounded-xl bg-gradient-to-r from-purple-600 to-emerald-600 hover:from-purple-500 hover:to-emerald-500 disabled:opacity-50 text-sm font-bold text-white transition-all shadow-lg shadow-purple-600/25 flex items-center justify-center space-x-2"
                     >
-                      {isProcessing ? (
+                      {!isConnected ? (
+                        <>
+                          <Wallet className="w-4 h-4" />
+                          <span>Connect Wallet to Proceed</span>
+                        </>
+                      ) : isProcessing ? (
                         <>
                           <RefreshCw className="w-4 h-4 animate-spin" />
                           <span>Awaiting Validator Consensus (up to 180s)...</span>

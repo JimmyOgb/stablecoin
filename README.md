@@ -21,28 +21,44 @@ To reflect macroeconomic time value and system risk, borrow interest compounds c
   $$\text{cumulative\_interest\_factor}_{t} = \text{cumulative\_interest\_factor}_{t_{\text{last}}} + \Delta \text{Factor}$$
 - **Debt Growth:** Any interaction (`deposit_and_mint`, `repay_and_withdraw`, `liquidate`, `accrue_interest`) updates individual vault debt according to the global accumulator factor.
 
-### Pillar 3: 10% Bonus Liquidation Engine
-When market volatility reduces the value of locked GEN collateral below the dynamic Collateral Ratio ($\text{CR}_t$), the vault becomes undercollateralized ($\text{is\_solvent} = \text{False}$):
-$$\text{Solvency Condition:} \quad (\text{collateral} \times \text{gen\_price\_usd} \times 100) \ge (\text{debt} \times \text{CR})$$
+### Pillar 3: 10% Bonus Liquidation Engine & 20% Safety Buffer
+To prevent instant liquidations upon opening a vault, the protocol enforces strict separation between the **Mint Collateral Ratio** ($\text{CR}_{\text{mint}} = 150\%$) and the **Liquidation Threshold** ($\text{CR}_{\text{liq}} = 130\%$):
+- **20% Liquidation Buffer:** Borrowers mint debt requiring $\text{CR} \ge 150\%$. A position is only subject to liquidation when market volatility or debt accumulation pushes its collateralization strictly below $130\%$:
+  $$\text{Minting Requirement:} \quad (\text{collateral} \times \text{gen\_price\_usd} \times 100) \ge (\text{debt} \times \text{CR}_{\text{mint}})$$
+  $$\text{Liquidation Trigger:} \quad (\text{collateral} \times \text{gen\_price\_usd} \times 100) < (\text{debt} \times \text{CR}_{\text{liq}})$$
+  Positions between $130\%$ and $150\%$ cannot mint new debt but are strictly protected by the 20% buffer against liquidation.
 - **Unsafe Vault Liquidation:** Any third-party liquidator holding aUSD can call `liquidate(borrower, debt_to_cover)`.
 - **10% Incentive Bonus:** The liquidator repays `debt_to_cover` in aUSD and receives the equivalent USD value of borrower GEN collateral plus an immediate **10% bonus**:
   $$\text{seized\_gen} = \frac{\text{debt\_to\_cover} \times 1.10}{\text{gen\_price\_usd}}$$
 - The seized GEN collateral is transferred directly to the liquidator via `_Recipient(liquidator).emit_transfer()`, protecting system solvency.
 
-### Pillar 4: Hard Peg Defense Mechanism ($1.00 Peg Floor Redemption)
-To eliminate secondary market de-pegging, the protocol enforces an on-chain arbitrage redemption floor:
+### Pillar 4: Hard Peg Defense & Global Protocol Solvency Guard
+To eliminate secondary market de-pegging, the protocol enforces an on-chain arbitrage redemption floor with mathematical solvency protection:
 - Any user or arbitrageur can call `redeem(ausd_amount)` to burn aUSD and directly redeem **$1.00 USD worth of GEN collateral** from protocol reserves (minus a 0.5% protocol redemption fee):
   $$\text{redeemed\_gen} = \frac{\text{ausd\_amount} \times 0.995}{\text{gen\_price\_usd}}$$
-- **Arbitrage Mechanism:** If aUSD trades on secondary markets at e.g. $0.95, arbitrageurs buy cheap aUSD and instantly redeem it here for $0.995 worth of GEN collateral, earning an instant risk-free 4.5% arbitrage spread while reducing aUSD supply until market price returns to parity.
+- **Global Solvency Guard:** Redemptions are strictly gated by global protocol solvency:
+  $$\text{remaining\_collateral\_usd} \ge \text{remaining\_debt} \times 110\%$$
+  $$\text{total\_collateral\_reserves} \ge \text{redeemed\_gen}$$
+  This invariant ensures redemptions can never drain reserves below healthy levels or compromise remaining circulating aUSD holders.
+- **Arbitrage Mechanism:** If aUSD trades on secondary markets at e.g. $0.95, arbitrageurs buy cheap aUSD and instantly redeem it here for $0.995 worth of GEN collateral, earning a risk-free 4.5% arbitrage spread while reducing aUSD supply until market price returns to parity.
+
+### Pillar 5: Payable Rollback Native Asset Refund Guard
+In GenLayer's execution model, native `GEN` attached to a transaction via `@gl.public.write.payable` enters the contract balance before method execution. To prevent native GEN from ever being trapped in the contract balance on revert:
+- If a deposit fails validation (insufficient collateral, undercollateralized mint, or non-positive amounts), `deposit_and_mint` explicitly transfers the attached `gl.message.value` back to the sender before raising the exception:
+  ```python
+  _Recipient(gl.message.sender_address).emit_transfer(value=u256(deposited))
+  ```
+- This guarantees net-zero contract balance change on any failed or reverted transaction.
 
 ---
 
 ## 2. Validator-Checked GEN Price & Equivalence Principle ($\pm 2\%$ Tolerance)
 
-Unlike naive contracts that trust a single leader's price feed, aUSD enforces GenLayer's non-deterministic equivalence principle (`gl.vm.run_nondet_unsafe`):
+Unlike naive contracts that trust a single leader's price feed, aUSD enforces GenLayer's non-deterministic equivalence principle (`gl.vm.run_nondet`):
 
 1. **Independent Telemetry Fetching:** The leader validator fetches live GEN/USD price telemetry and market risk indicators via `gl.nondet.web.get()` and proposes:
    $$\{\text{gen\_price\_usd}, \, \text{new\_cr}, \, \text{new\_fee\_bps}, \, \text{rationale}\}$$
+   The prompt strictly instructs validators to analyze GEN liquidity, momentum, and collateralization without referencing ETH or unpegged external assets.
 2. **Validator Equivalence Check:** Each validator independently fetches GEN market data and re-evaluates fair market value. The validator function strictly enforces:
    $$\frac{|\text{Leader\_Price} - \text{Validator\_Price}|}{\text{Validator\_Price}} \le 2.0\%$$
    $$\text{In Integer Math:} \quad |\text{Leader\_Price} - \text{Validator\_Price}| \times 100 \le \text{Validator\_Price} \times 2$$
@@ -52,19 +68,32 @@ Unlike naive contracts that trust a single leader's price feed, aUSD enforces Ge
 
 ---
 
-## 3. StudioNet Deployment Metadata
+## 3. StudioNet Deployment & Verifiable Live 3-Transaction Trail
 
-- **Contract Address:** `0xf7908d23780bA6fd489B5835f13143c5aF15Fe06`
-- **Deployment Tx Hash:** `0xf304492b537da795eb8542ec765d74d74d2be5ea7d16c5bb2c167a381a0e17fc`
-- **Consensus Round Result:** `MAJORITY_AGREE` (5 / 5 Validators Agreed)
-- **Status:** `ACCEPTED`
-- **Network:** GenLayer StudioNet
-- **Chain ID:** `61999`
-- **Native Currency:** `GEN` (18 Decimals)
+### Deployed Contract Metadata
+- **Contract Address:** [`0xd620F2Fb7908B9e1A83fA439fF7b4e40638Fa2a0`](https://genlayer-explorer.vercel.app/address/0xd620F2Fb7908B9e1A83fA439fF7b4e40638Fa2a0)
+- **Deployment Transaction Hash:** [`0x573f8af6887ccad810b0b40ef66575d07f51ddecc802751cc0b86c348fe3a46d`](https://genlayer-explorer.vercel.app/tx/0x573f8af6887ccad810b0b40ef66575d07f51ddecc802751cc0b86c348fe3a46d)
+- **Deployment Consensus:** `MAJORITY_AGREE` (5 / 5 Validators Agreed)
+- **Status:** `FINALIZED`
+- **Network:** GenLayer StudioNet (Chain ID `61999`)
+- **Native Asset:** `GEN` (18 Decimals)
 - **Stablecoin Token:** `aUSD` (18 Decimals)
 - **RPC Endpoint:** `https://studio.genlayer.com/api`
 - **Block Explorer:** [https://genlayer-explorer.vercel.app](https://genlayer-explorer.vercel.app)
 - **Live Production Frontend:** [https://genlayer-stablecoin.vercel.app](https://genlayer-stablecoin.vercel.app)
+
+### Verifiable 3-Transaction Live Trail on StudioNet
+The deployed contract has executed a verifiable live on-chain trail validating the complete stablecoin lifecycle with 100% consensus finalization:
+
+| # | Protocol Module | Transaction Hash | Status | Consensus Result | Explorer Link |
+|---|-----------------|------------------|--------|------------------|---------------|
+| **Tx 1** | **Deposit & Mint** | `0x08bfa6ae00d364e472813ec644c5b1fbc536e94fa6b558e474a625f314b82eff` | `FINALIZED` | `MAJORITY_AGREE` (5/5) | [Verify on Explorer](https://genlayer-explorer.vercel.app/tx/0x08bfa6ae00d364e472813ec644c5b1fbc536e94fa6b558e474a625f314b82eff) |
+| **Tx 2** | **Liquidation Engine** | `0x1cdad8a4eb2c23089a3f2ec445de198c841705590d85cca4584b1ad1799f271f` | `FINALIZED` | `MAJORITY_AGREE` (4/5) | [Verify on Explorer](https://genlayer-explorer.vercel.app/tx/0x1cdad8a4eb2c23089a3f2ec445de198c841705590d85cca4584b1ad1799f271f) |
+| **Tx 3** | **Peg Redemption Arbitrage** | `0xf3a2b6f8cb9fa60af4def642d2f1c95a4b627a6cb184504ebae5e50170488bce` | `FINALIZED` | `MAJORITY_AGREE` (5/5) | [Verify on Explorer](https://genlayer-explorer.vercel.app/tx/0xf3a2b6f8cb9fa60af4def642d2f1c95a4b627a6cb184504ebae5e50170488bce) |
+
+**Associated On-Chain Operations:**
+- **AI Policy Rebalance (LLM Deliberation):** [`0x2e74c471ed2aa9a53a3fd60f653584ec6e6fb800b4fa78603c7243f2152226aa`](https://genlayer-explorer.vercel.app/tx/0x2e74c471ed2aa9a53a3fd60f653584ec6e6fb800b4fa78603c7243f2152226aa) — `FINALIZED`, `MAJORITY_AGREE`.
+- **aUSD Token Transfer:** [`0xab5ffb4a5af4a321c4c434fe7741466ffa373675db302e0fa4e84b6cb04365b2`](https://genlayer-explorer.vercel.app/tx/0xab5ffb4a5af4a321c4c434fe7741466ffa373675db302e0fa4e84b6cb04365b2) — `FINALIZED`, `MAJORITY_AGREE`.
 
 ---
 
@@ -148,28 +177,31 @@ class MonetaryPolicyContract(gl.Contract):
 
 The contract includes comprehensive direct-mode unit tests (`tests/direct/test_monetary_policy.py`) executing against GenLayer's VMContext test runner.
 
-### Test Results (10/10 Passed)
+### Test Results (13/13 Passed - 100% Pass Rate)
 ```bash
 $ pytest tests/direct/test_monetary_policy.py -v
 
-tests/direct/test_monetary_policy.py::test_genesis_state PASSED                         [ 10%]
-tests/direct/test_monetary_policy.py::test_token_minting_balance_and_transfers PASSED   [ 20%]
-tests/direct/test_monetary_policy.py::test_deposit_and_mint_solvency PASSED            [ 30%]
-tests/direct/test_monetary_policy.py::test_deposit_and_mint_insolvent_reverts PASSED    [ 40%]
-tests/direct/test_monetary_policy.py::test_repay_and_withdraw PASSED                    [ 50%]
-tests/direct/test_monetary_policy.py::test_stability_fee_interest_accrual PASSED       [ 60%]
-tests/direct/test_monetary_policy.py::test_liquidation_of_undercollateralized_vault_with_bonus PASSED [ 70%]
-tests/direct/test_monetary_policy.py::test_peg_redemption_arbitrage PASSED             [ 80%]
-tests/direct/test_monetary_policy.py::test_validator_equivalence_price_tolerance PASSED [ 90%]
+tests/direct/test_monetary_policy.py::test_genesis_state PASSED                         [  7%]
+tests/direct/test_monetary_policy.py::test_token_minting_balance_and_transfers PASSED   [ 15%]
+tests/direct/test_monetary_policy.py::test_deposit_and_mint_solvency_and_tracking PASSED [ 23%]
+tests/direct/test_monetary_policy.py::test_deposit_and_mint_insolvent_reverts PASSED    [ 30%]
+tests/direct/test_monetary_policy.py::test_invariant_test_a_payable_rollback_refunds_on_revert PASSED [ 38%]
+tests/direct/test_monetary_policy.py::test_invariant_test_b_liquidation_buffer_holds PASSED [ 46%]
+tests/direct/test_monetary_policy.py::test_invariant_test_c_liquidation_under_threshold_with_bonus PASSED [ 53%]
+tests/direct/test_monetary_policy.py::test_invariant_test_d_solvency_guard_prevents_drain PASSED [ 61%]
+tests/direct/test_monetary_policy.py::test_repay_and_withdraw PASSED                    [ 69%]
+tests/direct/test_monetary_policy.py::test_stability_fee_interest_accrual PASSED       [ 76%]
+tests/direct/test_monetary_policy.py::test_peg_redemption_arbitrage PASSED             [ 84%]
+tests/direct/test_monetary_policy.py::test_validator_equivalence_price_tolerance PASSED [ 92%]
 tests/direct/test_monetary_policy.py::test_circuit_breakers_clamp_extreme_hallucinations PASSED [100%]
 
-============================= 10 passed in 2.85s ==============================
+============================= 13 passed in 28.42s ==============================
 ```
 
 ### Static Analysis
 ```bash
 $ genvm-lint check contracts/monetary_policy.py --json
-{"ok":true,"lint":{"ok":true,"passed":3},"validate":{"ok":true,"contract":"MonetaryPolicyContract","methods":17,"view_methods":8,"write_methods":9,"ctor_params":0}}
+{"ok":true,"lint":{"ok":true,"passed":3},"validate":{"ok":true,"contract":"MonetaryPolicyContract","methods":18,"view_methods":8,"write_methods":10,"ctor_params":0}}
 ```
 
 ---
@@ -185,7 +217,7 @@ $ genvm-lint check contracts/monetary_policy.py --json
 ### Environment Configuration
 Configure `frontend/.env.local`:
 ```env
-NEXT_PUBLIC_CONTRACT_ADDRESS=0xf7908d23780bA6fd489B5835f13143c5aF15Fe06
+NEXT_PUBLIC_CONTRACT_ADDRESS=0xd620F2Fb7908B9e1A83fA439fF7b4e40638Fa2a0
 NEXT_PUBLIC_GENLAYER_RPC_URL=https://studio.genlayer.com/api
 NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=c4f79cc821944d9680842e34466bfbd
 ```
