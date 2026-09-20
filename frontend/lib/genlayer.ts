@@ -1,7 +1,7 @@
 import { createClient, chains } from "genlayer-js";
 
 export const CONTRACT_ADDRESS = (process.env.NEXT_PUBLIC_CONTRACT_ADDRESS ||
-  "0xd620F2Fb7908B9e1A83fA439fF7b4e40638Fa2a0") as `0x${string}`;
+  "0xCC0ba4042B461935b886Dd48d195Cdf4f9Ac988A") as `0x${string}`;
 
 export const RPC_URL =
   process.env.NEXT_PUBLIC_GENLAYER_RPC_URL || "https://studio.genlayer.com/api";
@@ -19,6 +19,9 @@ export interface ProtocolState {
   asset_price_usd: number;
   last_fee_update?: number;
   cumulative_interest_factor?: number;
+  is_telemetry_verified?: boolean;
+  telemetry_source?: string;
+  telemetry_timestamp?: number;
 }
 
 export interface UserPosition {

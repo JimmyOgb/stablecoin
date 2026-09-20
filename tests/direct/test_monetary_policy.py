@@ -1,36 +1,39 @@
 import json
 import pytest
 
-MOCK_GEN_URL = r".*telemetry\.genlayer\.io/api/v1/gen/market.*"
+MOCK_GEN_TELEMETRY_URL = r".*genlayer-stablecoin\.vercel\.app/api/telemetry.*"
 MOCK_COINGECKO_URL = r".*api\.coingecko\.com/api/v3/simple/price.*"
 
 SAMPLE_TELEMETRY = json.dumps({
-    "price": 2850,
-    "change_24h": -4.2,
-    "volume_24h": 18500000000.0,
-    "market_depth_usd": 25000000.0,
-    "volatility_index": 0.18,
+    "symbol": "GEN",
+    "price_usd": 1.05,
+    "volume_24h_usd": 18450200.0,
+    "liquidity_depth_usd": 28940000.0,
+    "volatility_index": 0.14,
+    "price_change_24h_pct": 1.25,
+    "timestamp": 1789910000,
+    "status": "LIVE_VERIFIED",
 })
 
 NORMAL_LLM_OUTPUT = json.dumps({
-    "gen_price_usd": 2850,
+    "gen_price_usd": 1,
     "new_cr": 165,
     "new_fee_bps": 450,
-    "rationale": "Elevated 24h GEN market drawdown (-4.2%) observed. Increasing mint collateral ratio to 165% and stability fee to 450 bps to de-risk vault solvency."
+    "rationale": "Real-time GEN market telemetry verified: 24h volume of $18450200 and liquidity depth of $28940000. Increasing mint collateral ratio to 165% and stability fee to 450 bps."
 })
 
 EXTREME_LLM_OUTPUT = json.dumps({
-    "gen_price_usd": 2850,
+    "gen_price_usd": 1,
     "new_cr": 350,       # Exceeds 200 max
     "new_fee_bps": 5000, # Exceeds 1200 max
-    "rationale": "Extreme black swan fear hallucination on GEN."
+    "rationale": "Extreme black swan fear hallucination on GEN with volume $18450200."
 })
 
 LOW_LLM_OUTPUT = json.dumps({
-    "gen_price_usd": 2850,
+    "gen_price_usd": 1,
     "new_cr": 50,        # Below 120 min
     "new_fee_bps": 10,   # Below 150 min
-    "rationale": "Excessive greed hallucination on GEN."
+    "rationale": "Excessive greed hallucination on GEN with volume $18450200."
 })
 
 def to_hex(addr) -> str:
@@ -50,6 +53,9 @@ def test_genesis_state(direct_vm, direct_deploy):
     assert state["total_collateral"] == 0
     assert state["asset_price_usd"] == 2500
     assert state["cumulative_interest_factor"] == 10**18
+    assert state["is_telemetry_verified"] is False
+    assert state["telemetry_source"] == ""
+    assert state["telemetry_timestamp"] == 0
     assert contract.name() == "Adaptive USD"
     assert contract.symbol() == "aUSD"
     assert contract.decimals() == 18
@@ -177,11 +183,14 @@ def test_invariant_test_b_liquidation_buffer_holds(direct_vm, direct_deploy, dir
     # Vault CR = 2200 / 1600 = 137.5%
     # Notice: 137.5% is LESS than 150% (mint CR) but GREATER than 130% (liquidation ratio)!
     BUFFER_TELEMETRY = json.dumps({
-        "price": 2200,
-        "change_24h": -12.0,
-        "volume_24h": 20000000.0,
-        "market_depth_usd": 25000000.0,
+        "symbol": "GEN",
+        "price_usd": 2200,
+        "volume_24h_usd": 20000000.0,
+        "liquidity_depth_usd": 25000000.0,
         "volatility_index": 0.20,
+        "price_change_24h_pct": -12.0,
+        "timestamp": 1789910000,
+        "status": "LIVE_VERIFIED",
     })
     BUFFER_LLM = json.dumps({
         "gen_price_usd": 2200,
@@ -189,8 +198,7 @@ def test_invariant_test_b_liquidation_buffer_holds(direct_vm, direct_deploy, dir
         "new_fee_bps": 350,
         "rationale": "GEN price decreased to $2200. Maintaining mint CR at 150% and liquidation ratio at 130%."
     })
-    direct_vm.mock_web(MOCK_GEN_URL, {"status": 200, "body": BUFFER_TELEMETRY})
-    direct_vm.mock_web(MOCK_COINGECKO_URL, {"status": 200, "body": BUFFER_TELEMETRY})
+    direct_vm.mock_web(MOCK_GEN_TELEMETRY_URL, {"status": 200, "body": BUFFER_TELEMETRY})
     direct_vm.mock_llm(r".*autonomous risk engine.*", BUFFER_LLM)
     contract.rebalance_policy()
 
@@ -228,11 +236,14 @@ def test_invariant_test_c_liquidation_under_threshold_with_bonus(direct_vm, dire
     # GEN price drops to $1900
     # Alice's CR is now 1900 / 1600 = 118.75% < 130% liquidation ratio!
     CRASH_TELEMETRY = json.dumps({
-        "price": 1900,
-        "change_24h": -24.0,
-        "volume_24h": 45000000.0,
-        "market_depth_usd": 20000000.0,
+        "symbol": "GEN",
+        "price_usd": 1900,
+        "volume_24h_usd": 45000000.0,
+        "liquidity_depth_usd": 20000000.0,
         "volatility_index": 0.35,
+        "price_change_24h_pct": -24.0,
+        "timestamp": 1789910000,
+        "status": "LIVE_VERIFIED",
     })
     CRASH_LLM = json.dumps({
         "gen_price_usd": 1900,
@@ -240,8 +251,7 @@ def test_invariant_test_c_liquidation_under_threshold_with_bonus(direct_vm, dire
         "new_fee_bps": 400,
         "rationale": "GEN drawdown below threshold to $1900. Mint CR 150%, Liquidation ratio 130%."
     })
-    direct_vm.mock_web(MOCK_GEN_URL, {"status": 200, "body": CRASH_TELEMETRY})
-    direct_vm.mock_web(MOCK_COINGECKO_URL, {"status": 200, "body": CRASH_TELEMETRY})
+    direct_vm.mock_web(MOCK_GEN_TELEMETRY_URL, {"status": 200, "body": CRASH_TELEMETRY})
     direct_vm.mock_llm(r".*autonomous risk engine.*", CRASH_LLM)
     contract.rebalance_policy()
 
@@ -282,11 +292,14 @@ def test_invariant_test_d_global_solvency_guard_on_redemption(direct_vm, direct_
 
     # Simulate price drop to $1050 (near insolvency: 10 GEN * 1050 = $10,500 against 10,000 debt)
     DROP_TELEMETRY = json.dumps({
-        "price": 1050,
-        "change_24h": -58.0,
-        "volume_24h": 60000000.0,
-        "market_depth_usd": 15000000.0,
+        "symbol": "GEN",
+        "price_usd": 1050,
+        "volume_24h_usd": 60000000.0,
+        "liquidity_depth_usd": 15000000.0,
         "volatility_index": 0.45,
+        "price_change_24h_pct": -58.0,
+        "timestamp": 1789910000,
+        "status": "LIVE_VERIFIED",
     })
     DROP_LLM = json.dumps({
         "gen_price_usd": 1050,
@@ -294,8 +307,7 @@ def test_invariant_test_d_global_solvency_guard_on_redemption(direct_vm, direct_
         "new_fee_bps": 500,
         "rationale": "Severe GEN market drop to $1050. Global protocol solvency at risk."
     })
-    direct_vm.mock_web(MOCK_GEN_URL, {"status": 200, "body": DROP_TELEMETRY})
-    direct_vm.mock_web(MOCK_COINGECKO_URL, {"status": 200, "body": DROP_TELEMETRY})
+    direct_vm.mock_web(MOCK_GEN_TELEMETRY_URL, {"status": 200, "body": DROP_TELEMETRY})
     direct_vm.mock_llm(r".*autonomous risk engine.*", DROP_LLM)
     contract.rebalance_policy()
 
@@ -395,22 +407,38 @@ def test_validator_equivalence_price_tolerance(direct_vm, direct_deploy, direct_
     contract = direct_deploy("contracts/monetary_policy.py")
     direct_vm.sender = direct_alice
 
-    direct_vm.mock_web(MOCK_GEN_URL, {"status": 200, "body": SAMPLE_TELEMETRY})
-    direct_vm.mock_web(MOCK_COINGECKO_URL, {"status": 200, "body": SAMPLE_TELEMETRY})
-    direct_vm.mock_llm(r".*autonomous risk engine.*", NORMAL_LLM_OUTPUT)
+    # Price = 1000 for clean percentage verification
+    sample_price_telemetry = json.dumps({
+        "symbol": "GEN",
+        "price_usd": 1000,
+        "volume_24h_usd": 18450200.0,
+        "liquidity_depth_usd": 28940000.0,
+        "volatility_index": 0.14,
+        "price_change_24h_pct": 1.25,
+        "timestamp": 1789910000,
+        "status": "LIVE_VERIFIED"
+    })
+    llm_output_1000 = json.dumps({
+        "gen_price_usd": 1000,
+        "new_cr": 160,
+        "new_fee_bps": 400,
+        "rationale": "Real-time GEN market telemetry verified: volume $18450200, depth $28940000."
+    })
+    direct_vm.mock_web(MOCK_GEN_TELEMETRY_URL, {"status": 200, "body": sample_price_telemetry})
+    direct_vm.mock_llm(r".*autonomous risk engine.*", llm_output_1000)
     contract.rebalance_policy()
 
-    # Case A: Leader commits price 2860 (+0.35% deviation from 2850) -> WITHIN 2% tolerance -> ACCEPTED
+    # Case A: Leader commits price 1003 (+0.3% deviation from 1000) -> WITHIN 2% tolerance -> ACCEPTED
     assert direct_vm.run_validator(leader_result={
-        "gen_price_usd": 2860,
+        "gen_price_usd": 1003,
         "new_cr": 160,
         "new_fee_bps": 400,
         "rationale": "Within tolerance."
     }) is True
 
-    # Case B: Leader commits price 3000 (+5.26% deviation from 2850) -> EXCEEDS 2% tolerance -> REJECTED
+    # Case B: Leader commits price 1060 (+6.0% deviation from 1000) -> EXCEEDS 2% tolerance -> REJECTED
     assert direct_vm.run_validator(leader_result={
-        "gen_price_usd": 3000,
+        "gen_price_usd": 1060,
         "new_cr": 160,
         "new_fee_bps": 400,
         "rationale": "Exceeds tolerance."
@@ -422,8 +450,7 @@ def test_circuit_breakers_clamp_extreme_hallucinations(direct_vm, direct_deploy,
     direct_vm.sender = direct_alice
 
     # Upper bound test: LLM returns CR 350% and fee 5000 bps
-    direct_vm.mock_web(MOCK_GEN_URL, {"status": 200, "body": SAMPLE_TELEMETRY})
-    direct_vm.mock_web(MOCK_COINGECKO_URL, {"status": 200, "body": SAMPLE_TELEMETRY})
+    direct_vm.mock_web(MOCK_GEN_TELEMETRY_URL, {"status": 200, "body": SAMPLE_TELEMETRY})
     direct_vm.mock_llm(r".*autonomous risk engine.*", EXTREME_LLM_OUTPUT)
 
     contract.rebalance_policy()
@@ -436,8 +463,7 @@ def test_circuit_breakers_clamp_extreme_hallucinations(direct_vm, direct_deploy,
     direct_vm.clear_mocks()
 
     # Lower bound test: LLM returns CR 50% and fee 10 bps
-    direct_vm.mock_web(MOCK_GEN_URL, {"status": 200, "body": SAMPLE_TELEMETRY})
-    direct_vm.mock_web(MOCK_COINGECKO_URL, {"status": 200, "body": SAMPLE_TELEMETRY})
+    direct_vm.mock_web(MOCK_GEN_TELEMETRY_URL, {"status": 200, "body": SAMPLE_TELEMETRY})
     direct_vm.mock_llm(r".*autonomous risk engine.*", LOW_LLM_OUTPUT)
 
     contract.rebalance_policy()
@@ -446,3 +472,61 @@ def test_circuit_breakers_clamp_extreme_hallucinations(direct_vm, direct_deploy,
     assert state["mint_collateral_ratio"] == 120      # Clamped to 120 min
     assert state["liquidation_ratio"] == 100          # 120 - 20 = 100
     assert state["stability_fee_bps"] == 150          # Clamped to 150 min
+
+
+def test_rebalance_reverts_when_telemetry_fails(direct_vm, direct_deploy, direct_alice):
+    """Phase 3 Invariant Test 1: Simulates failed/empty telemetry fetch and verifies rebalance_policy raises TelemetryFailureClosed."""
+    contract = direct_deploy("contracts/monetary_policy.py")
+    direct_vm.sender = direct_alice
+
+    # Case 1: Web request returns 500 error
+    direct_vm.mock_web(MOCK_GEN_TELEMETRY_URL, {"status": 500, "body": "Internal Server Error"})
+    with direct_vm.expect_revert("TelemetryFailureClosed"):
+        contract.rebalance_policy()
+
+    direct_vm.clear_mocks()
+
+    # Case 2: Web request returns empty body
+    direct_vm.mock_web(MOCK_GEN_TELEMETRY_URL, {"status": 200, "body": ""})
+    with direct_vm.expect_revert("TelemetryFailureClosed"):
+        contract.rebalance_policy()
+
+    direct_vm.clear_mocks()
+
+    # Case 3: Web request missing required keys (e.g. missing liquidity_depth_usd)
+    incomplete_telemetry = json.dumps({
+        "symbol": "GEN",
+        "price_usd": 1.05,
+        "volume_24h_usd": 18450200.0,
+    })
+    direct_vm.mock_web(MOCK_GEN_TELEMETRY_URL, {"status": 200, "body": incomplete_telemetry})
+    with direct_vm.expect_revert("TelemetryFailureClosed"):
+        contract.rebalance_policy()
+
+    # Verify no fabricated numbers committed to state
+    state = contract.get_state()
+    assert state["is_telemetry_verified"] is False
+    assert state["telemetry_source"] == ""
+    assert state["telemetry_timestamp"] == 0
+    assert "Genesis" in state["last_reasoning"]
+
+
+def test_rebalance_succeeds_with_verified_telemetry_flag(direct_vm, direct_deploy, direct_alice):
+    """Phase 3 Invariant Test 2: Simulates valid telemetry payload and verifies is_telemetry_verified == True and on-chain state."""
+    contract = direct_deploy("contracts/monetary_policy.py")
+    direct_vm.sender = direct_alice
+
+    direct_vm.mock_web(MOCK_GEN_TELEMETRY_URL, {"status": 200, "body": SAMPLE_TELEMETRY})
+    direct_vm.mock_llm(r".*autonomous risk engine.*", NORMAL_LLM_OUTPUT)
+
+    contract.rebalance_policy()
+
+    state = contract.get_state()
+    assert state["is_telemetry_verified"] is True
+    assert state["telemetry_source"] == "https://genlayer-stablecoin.vercel.app/api/telemetry"
+    assert state["telemetry_timestamp"] == 1789910000
+    assert state["mint_collateral_ratio"] == 165
+    assert state["stability_fee_bps"] == 450
+    assert "18450200" in state["last_reasoning"]
+    assert "28940000" in state["last_reasoning"]
+

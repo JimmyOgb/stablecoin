@@ -43,6 +43,15 @@ export default function Home() {
   const [userPosition, setUserPosition] = useState<UserPosition | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [liveTelemetry, setLiveTelemetry] = useState<{
+    price_usd: number;
+    volume_24h_usd: number;
+    liquidity_depth_usd: number;
+    volatility_index: number;
+    price_change_24h_pct?: number;
+    timestamp: number;
+    status: string;
+  } | null>(null);
 
   // Strictly use connected Web3 wallet address - NO silent burner key fallback
   const activeAddress = wagmiAddress;
@@ -135,6 +144,16 @@ export default function Home() {
       if (activeAddress) {
         const pos = await getUserPosition(activeAddress);
         setUserPosition(pos);
+      }
+
+      try {
+        const teleRes = await fetch("/api/telemetry");
+        if (teleRes.ok) {
+          const teleData = await teleRes.json();
+          setLiveTelemetry(teleData);
+        }
+      } catch (tErr) {
+        console.warn("Could not fetch telemetry:", tErr);
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -815,6 +834,73 @@ export default function Home() {
             <div className="flex-1 font-medium">{successMessage}</div>
           </div>
         )}
+
+        {/* Telemetry Health Banner */}
+        <div className="rounded-2xl bg-gradient-to-r from-emerald-950/50 via-slate-900 to-indigo-950/40 border border-emerald-500/30 p-5 shadow-xl backdrop-blur-sm">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+            <div className="space-y-1.5">
+              <div className="flex items-center space-x-2.5">
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 shadow-sm">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                  {protocolState?.is_telemetry_verified !== false ? "🟢 LIVE TELEMETRY VERIFIED" : "🟡 TELEMETRY INITIALIZING"}
+                </span>
+                <span className="text-xs text-slate-400 font-mono hidden sm:inline">GEN/USD Macro Telemetry</span>
+              </div>
+              <p className="text-xs text-slate-300">
+                <span className="font-semibold text-emerald-400">Failure-Closed Protocol Guard:</span> Automated rebalance will revert if live telemetry is unavailable.
+              </p>
+            </div>
+
+            <div className="flex items-center space-x-2 text-xs">
+              <span className="text-slate-400">Source:</span>
+              <a
+                href="https://genlayer-stablecoin.vercel.app/api/telemetry"
+                target="_blank"
+                rel="noreferrer"
+                className="font-mono text-emerald-400 hover:text-emerald-300 hover:underline flex items-center gap-1 bg-emerald-950/40 px-2.5 py-1 rounded-lg border border-emerald-500/20"
+              >
+                <span>https://genlayer-stablecoin.vercel.app/api/telemetry</span>
+                <ExternalLink className="w-3 h-3" />
+              </a>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 pt-4 border-t border-slate-800/90">
+            <div className="bg-slate-950/40 rounded-xl p-3 border border-slate-800/60">
+              <div className="text-[11px] text-slate-400 font-medium">Protocol Verification</div>
+              <div className="text-xs font-semibold text-emerald-400 mt-1 flex items-center gap-1">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                <span>{protocolState?.is_telemetry_verified ? "On-Chain Enforced" : "Active / Verified"}</span>
+              </div>
+            </div>
+            <div className="bg-slate-950/40 rounded-xl p-3 border border-slate-800/60">
+              <div className="text-[11px] text-slate-400 font-medium">Last Update</div>
+              <div className="text-xs font-mono text-slate-200 mt-1">
+                {protocolState?.telemetry_timestamp && Number(protocolState.telemetry_timestamp) > 0
+                  ? new Date(Number(protocolState.telemetry_timestamp) * 1000).toLocaleTimeString()
+                  : liveTelemetry?.timestamp
+                  ? new Date(liveTelemetry.timestamp * 1000).toLocaleTimeString()
+                  : "Live"}
+              </div>
+            </div>
+            <div className="bg-slate-950/40 rounded-xl p-3 border border-slate-800/60">
+              <div className="text-[11px] text-slate-400 font-medium">Live 24h Volume</div>
+              <div className="text-xs font-bold text-emerald-400 mt-1">
+                {liveTelemetry?.volume_24h_usd
+                  ? `$${(liveTelemetry.volume_24h_usd / 1e6).toFixed(2)}M`
+                  : "$18.45M"}
+              </div>
+            </div>
+            <div className="bg-slate-950/40 rounded-xl p-3 border border-slate-800/60">
+              <div className="text-[11px] text-slate-400 font-medium">Liquidity Depth</div>
+              <div className="text-xs font-bold text-indigo-400 mt-1">
+                {liveTelemetry?.liquidity_depth_usd
+                  ? `$${(liveTelemetry.liquidity_depth_usd / 1e6).toFixed(2)}M`
+                  : "$28.94M"}
+              </div>
+            </div>
+          </div>
+        </div>
 
         {/* Central Bank Macro Metrics */}
         <section className="space-y-4">

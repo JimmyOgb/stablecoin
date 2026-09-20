@@ -4,8 +4,7 @@ from genlayer import *
 import json
 import datetime
 
-PRIMARY_GEN_TELEMETRY_URL = "https://telemetry.genlayer.io/api/v1/gen/market"
-FALLBACK_GEN_TELEMETRY_URL = "https://api.coingecko.com/api/v3/simple/price?ids=gen&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true"
+PRIMARY_GEN_TELEMETRY_URL = "https://genlayer-stablecoin.vercel.app/api/telemetry"
 DEFAULT_GEN_PRICE = 2500
 SECONDS_PER_YEAR = 31536000
 
@@ -30,51 +29,51 @@ def _get_current_timestamp() -> int:
     except Exception:
         return 0
 
-def _fetch_gen_market_data(current_price: int) -> dict:
-    fallback_price = current_price if current_price > 0 else DEFAULT_GEN_PRICE
-    telemetry = {
-        "price": fallback_price,
-        "change_24h": 0.0,
-        "volume_24h": 15_000_000.0,
-        "market_depth_usd": 25_000_000.0,
-        "volatility_index": 0.18,
+def _fetch_gen_market_data() -> dict:
+    try:
+        web_res = gl.nondet.web.get(PRIMARY_GEN_TELEMETRY_URL)
+    except Exception as e:
+        raise Exception("TelemetryFailureClosed: Live GEN market telemetry is unavailable. Rebalance aborted.") from e
+
+    if web_res.status != 200:
+        raise Exception("TelemetryFailureClosed: Live GEN market telemetry is unavailable. Rebalance aborted.")
+
+    raw_body = web_res.body
+    body_text = raw_body.decode("utf-8") if isinstance(raw_body, bytes) else str(raw_body)
+    if not body_text or not body_text.strip():
+        raise Exception("TelemetryFailureClosed: Live GEN market telemetry is unavailable. Rebalance aborted.")
+
+    try:
+        data = json.loads(body_text)
+    except Exception as e:
+        raise Exception("TelemetryFailureClosed: Live GEN market telemetry is unavailable. Rebalance aborted.") from e
+
+    if not isinstance(data, dict):
+        raise Exception("TelemetryFailureClosed: Live GEN market telemetry is unavailable. Rebalance aborted.")
+
+    required_keys = ["price_usd", "volume_24h_usd", "liquidity_depth_usd", "volatility_index"]
+    for k in required_keys:
+        if k not in data or data[k] is None:
+            raise Exception("TelemetryFailureClosed: Live GEN market telemetry is unavailable. Rebalance aborted.")
+
+    try:
+        price_val = float(data["price_usd"])
+        vol_val = float(data["volume_24h_usd"])
+        depth_val = float(data["liquidity_depth_usd"])
+        volat_val = float(data["volatility_index"])
+        change_val = float(data.get("price_change_24h_pct", 0.0))
+        ts_val = int(data.get("timestamp", 0))
+    except (ValueError, TypeError) as e:
+        raise Exception("TelemetryFailureClosed: Live GEN market telemetry is unavailable. Rebalance aborted.") from e
+
+    return {
+        "price_usd": price_val,
+        "volume_24h_usd": vol_val,
+        "liquidity_depth_usd": depth_val,
+        "volatility_index": volat_val,
+        "price_change_24h_pct": change_val,
+        "timestamp": ts_val,
     }
-
-    urls = [PRIMARY_GEN_TELEMETRY_URL, FALLBACK_GEN_TELEMETRY_URL]
-    for u in urls:
-        try:
-            web_res = gl.nondet.web.get(u)
-            raw_body = web_res.body
-            body_text = raw_body.decode("utf-8") if isinstance(raw_body, bytes) else str(raw_body)
-            data = json.loads(body_text)
-
-            # Structured market endpoint format
-            if isinstance(data, dict) and "price" in data:
-                telemetry["price"] = int(float(data["price"]))
-                if "change_24h" in data:
-                    telemetry["change_24h"] = float(data["change_24h"])
-                if "volume_24h" in data:
-                    telemetry["volume_24h"] = float(data["volume_24h"])
-                if "market_depth_usd" in data:
-                    telemetry["market_depth_usd"] = float(data["market_depth_usd"])
-                if "volatility_index" in data:
-                    telemetry["volatility_index"] = float(data["volatility_index"])
-                return telemetry
-
-            # Fallback simple price format: {"gen": {"usd": ..., "usd_24h_change": ..., "usd_24h_vol": ...}}
-            if isinstance(data, dict):
-                token_data = data.get("gen", data.get("genlayer", data.get("gen-token", {})))
-                if isinstance(token_data, dict) and "usd" in token_data:
-                    telemetry["price"] = int(float(token_data["usd"]))
-                    if "usd_24h_change" in token_data:
-                        telemetry["change_24h"] = float(token_data["usd_24h_change"])
-                    if "usd_24h_vol" in token_data:
-                        telemetry["volume_24h"] = float(token_data["usd_24h_vol"])
-                    return telemetry
-        except Exception:
-            continue
-
-    return telemetry
 
 
 class MonetaryPolicyContract(gl.Contract):
@@ -93,6 +92,9 @@ class MonetaryPolicyContract(gl.Contract):
     last_fee_update: u256
     cumulative_interest_factor: u256
     user_last_factor: TreeMap[str, u256]
+    is_telemetry_verified: bool
+    telemetry_source: str
+    telemetry_timestamp: u256
 
     def __init__(self):
         self.mint_collateral_ratio = u256(150)
@@ -105,6 +107,9 @@ class MonetaryPolicyContract(gl.Contract):
         self.asset_price_usd = u256(DEFAULT_GEN_PRICE)
         self.last_fee_update = u256(0)
         self.cumulative_interest_factor = u256(10**18)
+        self.is_telemetry_verified = False
+        self.telemetry_source = ""
+        self.telemetry_timestamp = u256(0)
 
     # --- Standard Token Mechanics (Transferable aUSD) ---
 
@@ -249,21 +254,21 @@ class MonetaryPolicyContract(gl.Contract):
     @gl.public.write
     def rebalance_policy(self) -> None:
         def leader_fn() -> dict:
-            current_price = int(self.asset_price_usd)
-            market_data = _fetch_gen_market_data(current_price)
-            price = market_data["price"]
-            change_24h = market_data["change_24h"]
-            volume_24h = market_data["volume_24h"]
-            market_depth = market_data["market_depth_usd"]
+            market_data = _fetch_gen_market_data()
+            price = market_data["price_usd"]
+            change_24h = market_data["price_change_24h_pct"]
+            volume_24h = market_data["volume_24h_usd"]
+            market_depth = market_data["liquidity_depth_usd"]
             volatility = market_data["volatility_index"]
+            tele_ts = market_data["timestamp"]
 
             prompt = (
                 "You are the autonomous risk engine for the GEN native token and aUSD stablecoin. "
-                "Analyze the market metrics for GEN. Output MUST evaluate GEN liquidity, GEN price momentum, and protocol collateralization. "
+                "Analyze the real-time market telemetry metrics for GEN. Output MUST evaluate GEN liquidity, GEN price momentum, and protocol collateralization. "
                 "DO NOT mention ETH or external unpegged assets.\n\n"
                 "Real-time GEN market risk metrics:\n"
                 f"- Asset: GEN/USD\n"
-                f"- Live GEN Price: ${price}\n"
+                f"- Live GEN Price: ${price:.2f}\n"
                 f"- GEN 24h Price Momentum/Change: {change_24h:.2f}%\n"
                 f"- GEN 24h Trading Volume / Liquidity: ${volume_24h:.0f}\n"
                 f"- GEN Market Depth: ${market_depth:.0f}\n"
@@ -274,7 +279,9 @@ class MonetaryPolicyContract(gl.Contract):
                 "1. gen_price_usd: Validator-verified GEN market price (integer USD).\n"
                 "2. new_cr: Minimum mint collateral ratio (e.g. 150 for 150%). Range: 120 to 200.\n"
                 "3. new_fee_bps: Stability borrow fee in basis points (e.g. 300 for 3.00%). Range: 150 to 1200.\n"
-                "4. rationale: A concise macroeconomic explanation strictly evaluating GEN liquidity, GEN price momentum, and protocol collateralization. Must exclusively reference GEN and aUSD.\n\n"
+                "4. rationale: A concise macroeconomic explanation strictly evaluating GEN liquidity, GEN price momentum, and protocol collateralization. "
+                f"Your rationale MUST explicitly cite the actual live market figures (such as 24h volume of ${volume_24h:.0f} or liquidity depth of ${market_depth:.0f}). "
+                "Must exclusively reference GEN and aUSD.\n\n"
                 "Respond with strictly valid JSON:\n"
                 '{"gen_price_usd": <int>, "new_cr": <int>, "new_fee_bps": <int>, "rationale": "<string>"}'
             )
@@ -288,7 +295,7 @@ class MonetaryPolicyContract(gl.Contract):
             else:
                 raise gl.vm.UserError("[LLM_ERROR] Invalid LLM response format")
 
-            raw_price = parsed.get("gen_price_usd", parsed.get("price", price))
+            raw_price = parsed.get("gen_price_usd", parsed.get("price", int(round(price))))
             raw_cr = parsed.get("new_cr", parsed.get("collateral_ratio", 150))
             raw_fee = parsed.get("new_fee_bps", parsed.get("stability_fee_bps", 300))
             rationale_text = str(parsed.get("rationale", parsed.get("reasoning", "GEN market metrics analyzed; policy rebalanced.")))
@@ -299,7 +306,7 @@ class MonetaryPolicyContract(gl.Contract):
             try:
                 price_val = int(round(float(str(raw_price).strip())))
             except (ValueError, TypeError):
-                price_val = price
+                price_val = int(round(price))
 
             try:
                 cr_val = int(round(float(str(raw_cr).strip())))
@@ -321,6 +328,7 @@ class MonetaryPolicyContract(gl.Contract):
                 "new_cr": clamped_cr,
                 "new_fee_bps": clamped_fee,
                 "rationale": rationale_text[:500],
+                "telemetry_timestamp": tele_ts,
             }
 
         def validator_fn(leader_res: gl.vm.Result) -> bool:
@@ -375,6 +383,14 @@ class MonetaryPolicyContract(gl.Contract):
         self.last_reasoning = decision["rationale"]
         if decision.get("gen_price_usd") and decision["gen_price_usd"] > 0:
             self.asset_price_usd = u256(decision["gen_price_usd"])
+
+        # Update on-chain verified telemetry state
+        self.is_telemetry_verified = True
+        self.telemetry_source = "https://genlayer-stablecoin.vercel.app/api/telemetry"
+        current_time = decision.get("telemetry_timestamp", 0)
+        if current_time is None or int(current_time) <= 0:
+            current_time = _get_current_timestamp()
+        self.telemetry_timestamp = u256(int(current_time))
 
     # --- Vault Operations ---
 
@@ -584,6 +600,9 @@ class MonetaryPolicyContract(gl.Contract):
             "asset_price_usd": price,
             "last_fee_update": int(self.last_fee_update),
             "cumulative_interest_factor": int(self.cumulative_interest_factor),
+            "is_telemetry_verified": self.is_telemetry_verified,
+            "telemetry_source": self.telemetry_source,
+            "telemetry_timestamp": int(self.telemetry_timestamp),
         }
 
     @gl.public.view

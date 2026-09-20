@@ -1,0 +1,10 @@
+{
+  "contractAddress": "0xCC0ba4042B461935b886Dd48d195Cdf4f9Ac988A",
+  "deploymentTxHash": "0xf508e43b723fecb67b560e348a7ee8b87530dc03ace5729cc65cf7fe1a6b7bc5",
+  "rebalanceTxHash": "0x8c808ea3fc95849435a1b18e264de0598d807eb96aaa8115ff88cfe38b779d33",
+  "is_telemetry_verified": true,
+  "telemetry_source": "https://genlayer-stablecoin.vercel.app/api/telemetry",
+  "telemetry_timestamp": 1789913623,
+  "last_reasoning": "GEN demonstrates positive momentum with a 1.25% 24h increase and a current price of $1.05. While liquidity is robust with $18,450,200 in 24h volume and $28,940,000 in market depth, the protocol currently holds 0 GEN in collateral against 0 aUSD debt. A conservative 160% CR and 450 bps fee are established to manage initial volatility (0.14 index) as aUSD minting commences, ensuring solvency despite the lack of historical collateral backing.",
+  "deployedAt": "2026-09-20T14:14:04.197Z"
+}

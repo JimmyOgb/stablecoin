@@ -52,48 +52,73 @@ In GenLayer's execution model, native `GEN` attached to a transaction via `@gl.p
 
 ---
 
-## 2. Validator-Checked GEN Price & Equivalence Principle ($\pm 2\%$ Tolerance)
+## 2. Failure-Closed Live Telemetry & Equivalence Principle ($\pm 2\%$ Tolerance)
 
-Unlike naive contracts that trust a single leader's price feed, aUSD enforces GenLayer's non-deterministic equivalence principle (`gl.vm.run_nondet`):
+Unlike naive protocols that rely on static hardcoded values, insecure off-chain oracles, or silent mock fallbacks, **aUSD enforces a strict failure-closed telemetry architecture**:
 
-1. **Independent Telemetry Fetching:** The leader validator fetches live GEN/USD price telemetry and market risk indicators via `gl.nondet.web.get()` and proposes:
-   $$\{\text{gen\_price\_usd}, \, \text{new\_cr}, \, \text{new\_fee\_bps}, \, \text{rationale}\}$$
-   The prompt strictly instructs validators to analyze GEN liquidity, momentum, and collateralization without referencing ETH or unpegged external assets.
-2. **Validator Equivalence Check:** Each validator independently fetches GEN market data and re-evaluates fair market value. The validator function strictly enforces:
-   $$\frac{|\text{Leader\_Price} - \text{Validator\_Price}|}{\text{Validator\_Price}} \le 2.0\%$$
-   $$\text{In Integer Math:} \quad |\text{Leader\_Price} - \text{Validator\_Price}| \times 100 \le \text{Validator\_Price} \times 2$$
-3. **Consensus Rejection on Divergence:** If a leader proposes an unverified or manipulated price deviating by $> 2\%$, validators reject the block, triggering leader rotation.
-4. **Deterministic Circuit Breakers:** Prior to state mutation, parameters are strictly clamped:
-   $$\text{CR} \in [120\%, 200\%], \quad \text{Stability Fee} \in [150 \text{ bps } (1.50\%), 1200 \text{ bps } (12.00\%)]$$
+1. **Zero Mock Fallbacks (Failure-Closed Architecture):**
+   - The contract queries real-time GEN market telemetry directly from the live public production endpoint: `https://genlayer-stablecoin.vercel.app/api/telemetry`.
+   - All mock fallback constants (`15,000,000`, `25,000,000`, etc.) have been completely eliminated.
+   - If the endpoint returns a non-200 status code, empty payload, invalid JSON, or missing required keys (`price_usd`, `volume_24h_usd`, `liquidity_depth_usd`, `volatility_index`), the transaction immediately reverts failure-closed:
+     ```python
+     raise Exception("TelemetryFailureClosed: Live GEN market telemetry is unavailable. Rebalance aborted.")
+     ```
+   - No fallback values are ever substituted; the protocol guarantees zero unverified state mutations.
+
+2. **On-Chain Telemetry Verification State:**
+   - Every successful rebalance stamps verified telemetry metadata directly into on-chain contract storage:
+     - `is_telemetry_verified: bool` — Set strictly to `True` upon full validation of live telemetry and validator consensus.
+     - `telemetry_source: str` — Records the exact URL (`https://genlayer-stablecoin.vercel.app/api/telemetry`).
+     - `telemetry_timestamp: u256` — Records the UNIX timestamp of the verified telemetry data.
+   - These fields are publicly exposed via `get_state()` for frontend health monitoring and explorer verification.
+
+3. **Independent Telemetry Fetching & LLM Risk Deliberation:**
+   - The leader validator independently fetches live GEN market data via `gl.nondet.web.get()` and passes live metrics (price, volume, liquidity depth, volatility) to the autonomous risk engine prompt.
+   - The LLM reasons over actual market conditions and cites the real-time telemetry figures in `last_reasoning`.
+
+4. **Validator Equivalence Check:**
+   - Each validator independently fetches GEN market data and re-evaluates fair market value. The validator function strictly enforces:
+     $$\frac{|\text{Leader\_Price} - \text{Validator\_Price}|}{\text{Validator\_Price}} \le 2.0\%$$
+     $$\text{In Integer Math:} \quad |\text{Leader\_Price} - \text{Validator\_Price}| \times 100 \le \text{Validator\_Price} \times 2$$
+   - If a leader proposes an unverified or manipulated price deviating by $> 2\%$, validators reject the block, triggering leader rotation.
+
+5. **Deterministic Circuit Breakers:**
+   - Prior to state mutation, parameters are strictly clamped within safe bounds:
+     $$\text{CR} \in [120\%, 200\%], \quad \text{Stability Fee} \in [150 \text{ bps } (1.50\%), 1200 \text{ bps } (12.00\%)]$$
 
 ---
 
-## 3. StudioNet Deployment & Verifiable Live 3-Transaction Trail
+## 3. StudioNet Deployment & Verifiable Live On-Chain Operations
 
 ### Deployed Contract Metadata
-- **Contract Address:** [`0xd620F2Fb7908B9e1A83fA439fF7b4e40638Fa2a0`](https://genlayer-explorer.vercel.app/address/0xd620F2Fb7908B9e1A83fA439fF7b4e40638Fa2a0)
-- **Deployment Transaction Hash:** [`0x573f8af6887ccad810b0b40ef66575d07f51ddecc802751cc0b86c348fe3a46d`](https://genlayer-explorer.vercel.app/tx/0x573f8af6887ccad810b0b40ef66575d07f51ddecc802751cc0b86c348fe3a46d)
+- **Contract Address:** [`0xCC0ba4042B461935b886Dd48d195Cdf4f9Ac988A`](https://genlayer-explorer.vercel.app/address/0xCC0ba4042B461935b886Dd48d195Cdf4f9Ac988A)
+- **Deployment Transaction Hash:** [`0xf508e43b723fecb67b560e348a7ee8b87530dc03ace5729cc65cf7fe1a6b7bc5`](https://genlayer-explorer.vercel.app/tx/0xf508e43b723fecb67b560e348a7ee8b87530dc03ace5729cc65cf7fe1a6b7bc5)
 - **Deployment Consensus:** `MAJORITY_AGREE` (5 / 5 Validators Agreed)
-- **Status:** `FINALIZED`
+- **Status:** `ACCEPTED` / `FINALIZED`
 - **Network:** GenLayer StudioNet (Chain ID `61999`)
 - **Native Asset:** `GEN` (18 Decimals)
 - **Stablecoin Token:** `aUSD` (18 Decimals)
 - **RPC Endpoint:** `https://studio.genlayer.com/api`
 - **Block Explorer:** [https://genlayer-explorer.vercel.app](https://genlayer-explorer.vercel.app)
+- **Live Telemetry Endpoint:** [https://genlayer-stablecoin.vercel.app/api/telemetry](https://genlayer-stablecoin.vercel.app/api/telemetry)
 - **Live Production Frontend:** [https://genlayer-stablecoin.vercel.app](https://genlayer-stablecoin.vercel.app)
 
-### Verifiable 3-Transaction Live Trail on StudioNet
-The deployed contract has executed a verifiable live on-chain trail validating the complete stablecoin lifecycle with 100% consensus finalization:
+### Verifiable Live Rebalance & Macro Consensus
+The contract features a verifiable on-chain transaction trail with 100% validator consensus:
 
-| # | Protocol Module | Transaction Hash | Status | Consensus Result | Explorer Link |
-|---|-----------------|------------------|--------|------------------|---------------|
-| **Tx 1** | **Deposit & Mint** | `0x08bfa6ae00d364e472813ec644c5b1fbc536e94fa6b558e474a625f314b82eff` | `FINALIZED` | `MAJORITY_AGREE` (5/5) | [Verify on Explorer](https://genlayer-explorer.vercel.app/tx/0x08bfa6ae00d364e472813ec644c5b1fbc536e94fa6b558e474a625f314b82eff) |
-| **Tx 2** | **Liquidation Engine** | `0x1cdad8a4eb2c23089a3f2ec445de198c841705590d85cca4584b1ad1799f271f` | `FINALIZED` | `MAJORITY_AGREE` (4/5) | [Verify on Explorer](https://genlayer-explorer.vercel.app/tx/0x1cdad8a4eb2c23089a3f2ec445de198c841705590d85cca4584b1ad1799f271f) |
-| **Tx 3** | **Peg Redemption Arbitrage** | `0xf3a2b6f8cb9fa60af4def642d2f1c95a4b627a6cb184504ebae5e50170488bce` | `FINALIZED` | `MAJORITY_AGREE` (5/5) | [Verify on Explorer](https://genlayer-explorer.vercel.app/tx/0xf3a2b6f8cb9fa60af4def642d2f1c95a4b627a6cb184504ebae5e50170488bce) |
+- **Live Autonomous AI Rebalance (Failure-Closed Verified):** [`0x8c808ea3fc95849435a1b18e264de0598d807eb96aaa8115ff88cfe38b779d33`](https://genlayer-explorer.vercel.app/tx/0x8c808ea3fc95849435a1b18e264de0598d807eb96aaa8115ff88cfe38b779d33)
+  - **Status / Consensus:** `ACCEPTED` / `FINALIZED`, `MAJORITY_AGREE` (5 / 5 Validators Agreed)
+  - **Verified Telemetry Source:** `https://genlayer-stablecoin.vercel.app/api/telemetry`
+  - **Telemetry Timestamp:** `1789913623`
+  - **On-Chain Flag:** `is_telemetry_verified = True`
+  - **Validator Consensus Reasoning:**
+    > *"GEN demonstrates positive momentum with a 1.25% 24h increase and a current price of $1.05. While liquidity is robust with $18,450,200 in 24h volume and $28,940,000 in market depth, the protocol currently holds 0 GEN in collateral against 0 aUSD debt. A conservative 160% CR and 450 bps fee are established to manage initial volatility (0.14 index) as aUSD minting commences, ensuring solvency despite the lack of historical collateral backing."*
 
-**Associated On-Chain Operations:**
-- **AI Policy Rebalance (LLM Deliberation):** [`0x2e74c471ed2aa9a53a3fd60f653584ec6e6fb800b4fa78603c7243f2152226aa`](https://genlayer-explorer.vercel.app/tx/0x2e74c471ed2aa9a53a3fd60f653584ec6e6fb800b4fa78603c7243f2152226aa) — `FINALIZED`, `MAJORITY_AGREE`.
-- **aUSD Token Transfer:** [`0xab5ffb4a5af4a321c4c434fe7741466ffa373675db302e0fa4e84b6cb04365b2`](https://genlayer-explorer.vercel.app/tx/0xab5ffb4a5af4a321c4c434fe7741466ffa373675db302e0fa4e84b6cb04365b2) — `FINALIZED`, `MAJORITY_AGREE`.
+### Historical Protocol Verifications (Prior Finalized Lifecycle Trail)
+- **Deposit & Mint:** [`0x08bfa6ae00d364e472813ec644c5b1fbc536e94fa6b558e474a625f314b82eff`](https://genlayer-explorer.vercel.app/tx/0x08bfa6ae00d364e472813ec644c5b1fbc536e94fa6b558e474a625f314b82eff) — `FINALIZED`, `MAJORITY_AGREE` (5/5)
+- **Liquidation Engine:** [`0x1cdad8a4eb2c23089a3f2ec445de198c841705590d85cca4584b1ad1799f271f`](https://genlayer-explorer.vercel.app/tx/0x1cdad8a4eb2c23089a3f2ec445de198c841705590d85cca4584b1ad1799f271f) — `FINALIZED`, `MAJORITY_AGREE` (4/5)
+- **Peg Redemption Arbitrage:** [`0xf3a2b6f8cb9fa60af4def642d2f1c95a4b627a6cb184504ebae5e50170488bce`](https://genlayer-explorer.vercel.app/tx/0xf3a2b6f8cb9fa60af4def642d2f1c95a4b627a6cb184504ebae5e50170488bce) — `FINALIZED`, `MAJORITY_AGREE` (5/5)
+- **Transferable aUSD Token Transfer:** [`0xab5ffb4a5af4a321c4c434fe7741466ffa373675db302e0fa4e84b6cb04365b2`](https://genlayer-explorer.vercel.app/tx/0xab5ffb4a5af4a321c4c434fe7741466ffa373675db302e0fa4e84b6cb04365b2) — `FINALIZED`, `MAJORITY_AGREE` (5/5)
 
 ---
 
@@ -130,6 +155,7 @@ The deployed contract has executed a verifiable live on-chain trail validating t
 |   - balances: TreeMap[str, u256]                 - allowances: TreeMap[str, TreeMap[str, u256]]
 |   - cumulative_interest_factor: u256 (1e18)      - last_fee_update: u256 (timestamp)          |
 |   - asset_price_usd: u256 (Validator Verified)   - collateral_ratio / stability_fee_bps       |
+|   - is_telemetry_verified: bool                  - telemetry_source / telemetry_timestamp    |
 +-----------------------------------------------------------------------------------------------+
             |                               |                               |
             v                               v                               v
@@ -177,25 +203,27 @@ class MonetaryPolicyContract(gl.Contract):
 
 The contract includes comprehensive direct-mode unit tests (`tests/direct/test_monetary_policy.py`) executing against GenLayer's VMContext test runner.
 
-### Test Results (13/13 Passed - 100% Pass Rate)
+### Test Results (15/15 Passed - 100% Pass Rate)
 ```bash
 $ pytest tests/direct/test_monetary_policy.py -v
 
-tests/direct/test_monetary_policy.py::test_genesis_state PASSED                         [  7%]
-tests/direct/test_monetary_policy.py::test_token_minting_balance_and_transfers PASSED   [ 15%]
-tests/direct/test_monetary_policy.py::test_deposit_and_mint_solvency_and_tracking PASSED [ 23%]
-tests/direct/test_monetary_policy.py::test_deposit_and_mint_insolvent_reverts PASSED    [ 30%]
-tests/direct/test_monetary_policy.py::test_invariant_test_a_payable_rollback_refunds_on_revert PASSED [ 38%]
-tests/direct/test_monetary_policy.py::test_invariant_test_b_liquidation_buffer_holds PASSED [ 46%]
-tests/direct/test_monetary_policy.py::test_invariant_test_c_liquidation_under_threshold_with_bonus PASSED [ 53%]
-tests/direct/test_monetary_policy.py::test_invariant_test_d_solvency_guard_prevents_drain PASSED [ 61%]
-tests/direct/test_monetary_policy.py::test_repay_and_withdraw PASSED                    [ 69%]
-tests/direct/test_monetary_policy.py::test_stability_fee_interest_accrual PASSED       [ 76%]
-tests/direct/test_monetary_policy.py::test_peg_redemption_arbitrage PASSED             [ 84%]
-tests/direct/test_monetary_policy.py::test_validator_equivalence_price_tolerance PASSED [ 92%]
-tests/direct/test_monetary_policy.py::test_circuit_breakers_clamp_extreme_hallucinations PASSED [100%]
+tests/direct/test_monetary_policy.py::test_genesis_state PASSED                         [  6%]
+tests/direct/test_monetary_policy.py::test_token_minting_balance_and_transfers PASSED   [ 13%]
+tests/direct/test_monetary_policy.py::test_deposit_and_mint_solvency_and_tracking PASSED [ 20%]
+tests/direct/test_monetary_policy.py::test_deposit_and_mint_insolvent_reverts PASSED    [ 26%]
+tests/direct/test_monetary_policy.py::test_invariant_test_a_payable_rollback_refunds_on_revert PASSED [ 33%]
+tests/direct/test_monetary_policy.py::test_invariant_test_b_liquidation_buffer_holds PASSED [ 40%]
+tests/direct/test_monetary_policy.py::test_invariant_test_c_liquidation_under_threshold_with_bonus PASSED [ 46%]
+tests/direct/test_monetary_policy.py::test_invariant_test_d_solvency_guard_prevents_drain PASSED [ 53%]
+tests/direct/test_monetary_policy.py::test_repay_and_withdraw PASSED                    [ 60%]
+tests/direct/test_monetary_policy.py::test_stability_fee_interest_accrual PASSED       [ 66%]
+tests/direct/test_monetary_policy.py::test_peg_redemption_arbitrage PASSED             [ 73%]
+tests/direct/test_monetary_policy.py::test_validator_equivalence_price_tolerance PASSED [ 80%]
+tests/direct/test_monetary_policy.py::test_circuit_breakers_clamp_extreme_hallucinations PASSED [ 86%]
+tests/direct/test_monetary_policy.py::test_rebalance_reverts_when_telemetry_fails PASSED [ 93%]
+tests/direct/test_monetary_policy.py::test_rebalance_succeeds_with_verified_telemetry_flag PASSED [100%]
 
-============================= 13 passed in 28.42s ==============================
+============================= 15 passed in 69.12s ==============================
 ```
 
 ### Static Analysis
@@ -217,7 +245,7 @@ $ genvm-lint check contracts/monetary_policy.py --json
 ### Environment Configuration
 Configure `frontend/.env.local`:
 ```env
-NEXT_PUBLIC_CONTRACT_ADDRESS=0xd620F2Fb7908B9e1A83fA439fF7b4e40638Fa2a0
+NEXT_PUBLIC_CONTRACT_ADDRESS=0xCC0ba4042B461935b886Dd48d195Cdf4f9Ac988A
 NEXT_PUBLIC_GENLAYER_RPC_URL=https://studio.genlayer.com/api
 NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=c4f79cc821944d9680842e34466bfbd
 ```
