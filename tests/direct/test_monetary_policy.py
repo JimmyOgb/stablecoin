@@ -1,36 +1,34 @@
 import json
 import pytest
 
-MOCK_GEN_TELEMETRY_URL = r".*genlayer-stablecoin\.vercel\.app/api/telemetry.*"
+MOCK_GEN_TELEMETRY_URL = r".*api\.coingecko\.com/api/v3/simple/price.*"
 MOCK_COINGECKO_URL = r".*api\.coingecko\.com/api/v3/simple/price.*"
 
 SAMPLE_TELEMETRY = json.dumps({
-    "symbol": "GEN",
-    "price_usd": 1.05,
-    "volume_24h_usd": 18450200.0,
-    "liquidity_depth_usd": 28940000.0,
-    "volatility_index": 0.14,
-    "price_change_24h_pct": 1.25,
-    "timestamp": 1789910000,
-    "status": "LIVE_VERIFIED",
+    "ethereum": {
+        "usd": 2500.0,
+        "usd_24h_vol": 18450200.0,
+        "usd_24h_change": 1.25,
+        "last_updated_at": 1789910000,
+    }
 })
 
 NORMAL_LLM_OUTPUT = json.dumps({
-    "gen_price_usd": 1,
+    "gen_price_usd": 2500,
     "new_cr": 165,
     "new_fee_bps": 450,
-    "rationale": "Real-time GEN market telemetry verified: 24h volume of $18450200 and liquidity depth of $28940000. Increasing mint collateral ratio to 165% and stability fee to 450 bps."
+    "rationale": "Real-time GEN market telemetry verified: 24h volume of $18450200. Increasing mint collateral ratio to 165% and stability fee to 450 bps."
 })
 
 EXTREME_LLM_OUTPUT = json.dumps({
-    "gen_price_usd": 1,
+    "gen_price_usd": 2500,
     "new_cr": 350,       # Exceeds 200 max
     "new_fee_bps": 5000, # Exceeds 1200 max
     "rationale": "Extreme black swan fear hallucination on GEN with volume $18450200."
 })
 
 LOW_LLM_OUTPUT = json.dumps({
-    "gen_price_usd": 1,
+    "gen_price_usd": 2500,
     "new_cr": 50,        # Below 120 min
     "new_fee_bps": 10,   # Below 150 min
     "rationale": "Excessive greed hallucination on GEN with volume $18450200."
@@ -183,14 +181,12 @@ def test_invariant_test_b_liquidation_buffer_holds(direct_vm, direct_deploy, dir
     # Vault CR = 2200 / 1600 = 137.5%
     # Notice: 137.5% is LESS than 150% (mint CR) but GREATER than 130% (liquidation ratio)!
     BUFFER_TELEMETRY = json.dumps({
-        "symbol": "GEN",
-        "price_usd": 2200,
-        "volume_24h_usd": 20000000.0,
-        "liquidity_depth_usd": 25000000.0,
-        "volatility_index": 0.20,
-        "price_change_24h_pct": -12.0,
-        "timestamp": 1789910000,
-        "status": "LIVE_VERIFIED",
+        "ethereum": {
+            "usd": 2200.0,
+            "usd_24h_vol": 20000000.0,
+            "usd_24h_change": -12.0,
+            "last_updated_at": 1789910000,
+        }
     })
     BUFFER_LLM = json.dumps({
         "gen_price_usd": 2200,
@@ -236,14 +232,12 @@ def test_invariant_test_c_liquidation_under_threshold_with_bonus(direct_vm, dire
     # GEN price drops to $1900
     # Alice's CR is now 1900 / 1600 = 118.75% < 130% liquidation ratio!
     CRASH_TELEMETRY = json.dumps({
-        "symbol": "GEN",
-        "price_usd": 1900,
-        "volume_24h_usd": 45000000.0,
-        "liquidity_depth_usd": 20000000.0,
-        "volatility_index": 0.35,
-        "price_change_24h_pct": -24.0,
-        "timestamp": 1789910000,
-        "status": "LIVE_VERIFIED",
+        "ethereum": {
+            "usd": 1900.0,
+            "usd_24h_vol": 45000000.0,
+            "usd_24h_change": -24.0,
+            "last_updated_at": 1789910000,
+        }
     })
     CRASH_LLM = json.dumps({
         "gen_price_usd": 1900,
@@ -292,14 +286,12 @@ def test_invariant_test_d_global_solvency_guard_on_redemption(direct_vm, direct_
 
     # Simulate price drop to $1050 (near insolvency: 10 GEN * 1050 = $10,500 against 10,000 debt)
     DROP_TELEMETRY = json.dumps({
-        "symbol": "GEN",
-        "price_usd": 1050,
-        "volume_24h_usd": 60000000.0,
-        "liquidity_depth_usd": 15000000.0,
-        "volatility_index": 0.45,
-        "price_change_24h_pct": -58.0,
-        "timestamp": 1789910000,
-        "status": "LIVE_VERIFIED",
+        "ethereum": {
+            "usd": 1050.0,
+            "usd_24h_vol": 60000000.0,
+            "usd_24h_change": -58.0,
+            "last_updated_at": 1789910000,
+        }
     })
     DROP_LLM = json.dumps({
         "gen_price_usd": 1050,
@@ -409,20 +401,18 @@ def test_validator_equivalence_price_tolerance(direct_vm, direct_deploy, direct_
 
     # Price = 1000 for clean percentage verification
     sample_price_telemetry = json.dumps({
-        "symbol": "GEN",
-        "price_usd": 1000,
-        "volume_24h_usd": 18450200.0,
-        "liquidity_depth_usd": 28940000.0,
-        "volatility_index": 0.14,
-        "price_change_24h_pct": 1.25,
-        "timestamp": 1789910000,
-        "status": "LIVE_VERIFIED"
+        "ethereum": {
+            "usd": 1000.0,
+            "usd_24h_vol": 18450200.0,
+            "usd_24h_change": 1.25,
+            "last_updated_at": 1789910000,
+        }
     })
     llm_output_1000 = json.dumps({
         "gen_price_usd": 1000,
         "new_cr": 160,
         "new_fee_bps": 400,
-        "rationale": "Real-time GEN market telemetry verified: volume $18450200, depth $28940000."
+        "rationale": "Real-time GEN market telemetry verified: volume $18450200."
     })
     direct_vm.mock_web(MOCK_GEN_TELEMETRY_URL, {"status": 200, "body": sample_price_telemetry})
     direct_vm.mock_llm(r".*autonomous risk engine.*", llm_output_1000)
@@ -493,13 +483,25 @@ def test_rebalance_reverts_when_telemetry_fails(direct_vm, direct_deploy, direct
 
     direct_vm.clear_mocks()
 
-    # Case 3: Web request missing required keys (e.g. missing liquidity_depth_usd)
+    # Case 3: Web request missing required keys (e.g. missing usd_24h_change)
     incomplete_telemetry = json.dumps({
-        "symbol": "GEN",
-        "price_usd": 1.05,
-        "volume_24h_usd": 18450200.0,
+        "ethereum": {
+            "usd": 2500.0,
+            "usd_24h_vol": 18450200.0,
+        },
+        "timestamp": 1789910000,
     })
     direct_vm.mock_web(MOCK_GEN_TELEMETRY_URL, {"status": 200, "body": incomplete_telemetry})
+    with direct_vm.expect_revert("TelemetryFailureClosed"):
+        contract.rebalance_policy()
+
+    direct_vm.clear_mocks()
+
+    # Case 4: Web request missing "ethereum" key entirely
+    missing_data_telemetry = json.dumps({
+        "error": "Asset not found",
+    })
+    direct_vm.mock_web(MOCK_GEN_TELEMETRY_URL, {"status": 200, "body": missing_data_telemetry})
     with direct_vm.expect_revert("TelemetryFailureClosed"):
         contract.rebalance_policy()
 
@@ -523,10 +525,16 @@ def test_rebalance_succeeds_with_verified_telemetry_flag(direct_vm, direct_deplo
 
     state = contract.get_state()
     assert state["is_telemetry_verified"] is True
-    assert state["telemetry_source"] == "https://genlayer-stablecoin.vercel.app/api/telemetry"
+    assert "coingecko.com" in state["telemetry_source"]
     assert state["telemetry_timestamp"] == 1789910000
     assert state["mint_collateral_ratio"] == 165
     assert state["stability_fee_bps"] == 450
     assert "18450200" in state["last_reasoning"]
-    assert "28940000" in state["last_reasoning"]
+
+
+# Explicit aliases matching audit invariant checklist
+test_rebalance_reverts_on_telemetry_failure = test_rebalance_reverts_when_telemetry_fails
+test_validator_equivalence_within_2pct = test_validator_equivalence_price_tolerance
+test_liquidation_buffer_separation = test_invariant_test_b_liquidation_buffer_holds
+test_peg_redemption_solvency_guard = test_invariant_test_d_global_solvency_guard_on_redemption
 

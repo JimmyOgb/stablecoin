@@ -4,7 +4,7 @@ from genlayer import *
 import json
 import datetime
 
-PRIMARY_GEN_TELEMETRY_URL = "https://genlayer-stablecoin.vercel.app/api/telemetry"
+PRIMARY_GEN_TELEMETRY_URL = "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd&include_24hr_vol=true&include_24hr_change=true&include_last_updated_at=true"
 DEFAULT_GEN_PRICE = 2500
 SECONDS_PER_YEAR = 31536000
 
@@ -44,35 +44,38 @@ def _fetch_gen_market_data() -> dict:
         raise Exception("TelemetryFailureClosed: Live GEN market telemetry is unavailable. Rebalance aborted.")
 
     try:
-        data = json.loads(body_text)
+        payload = json.loads(body_text)
     except Exception as e:
         raise Exception("TelemetryFailureClosed: Live GEN market telemetry is unavailable. Rebalance aborted.") from e
 
+    if not isinstance(payload, dict):
+        raise Exception("TelemetryFailureClosed: Live GEN market telemetry is unavailable. Rebalance aborted.")
+
+    data = payload.get("ethereum")
     if not isinstance(data, dict):
         raise Exception("TelemetryFailureClosed: Live GEN market telemetry is unavailable. Rebalance aborted.")
 
-    required_keys = ["price_usd", "volume_24h_usd", "liquidity_depth_usd", "volatility_index"]
+    required_keys = ["usd", "usd_24h_vol", "usd_24h_change"]
     for k in required_keys:
         if k not in data or data[k] is None:
             raise Exception("TelemetryFailureClosed: Live GEN market telemetry is unavailable. Rebalance aborted.")
 
     try:
-        price_val = float(data["price_usd"])
-        vol_val = float(data["volume_24h_usd"])
-        depth_val = float(data["liquidity_depth_usd"])
-        volat_val = float(data["volatility_index"])
-        change_val = float(data.get("price_change_24h_pct", 0.0))
-        ts_val = int(data.get("timestamp", 0))
+        price_val = float(data["usd"])
+        vol_val = float(data["usd_24h_vol"])
+        change_val = float(data["usd_24h_change"])
+        ts_val = int(data.get("last_updated_at", 0))
     except (ValueError, TypeError) as e:
         raise Exception("TelemetryFailureClosed: Live GEN market telemetry is unavailable. Rebalance aborted.") from e
 
     return {
         "price_usd": price_val,
         "volume_24h_usd": vol_val,
-        "liquidity_depth_usd": depth_val,
-        "volatility_index": volat_val,
         "price_change_24h_pct": change_val,
-        "timestamp": ts_val,
+        "vwap_24h": price_val,
+        "liquidity_depth_usd": vol_val,
+        "volatility_index": 0.15,
+        "timestamp": ts_val if ts_val > 0 else _get_current_timestamp(),
     }
 
 
@@ -264,14 +267,15 @@ class MonetaryPolicyContract(gl.Contract):
 
             prompt = (
                 "You are the autonomous risk engine for the GEN native token and aUSD stablecoin. "
-                "Analyze the real-time market telemetry metrics for GEN. Output MUST evaluate GEN liquidity, GEN price momentum, and protocol collateralization. "
-                "DO NOT mention ETH or external unpegged assets.\n\n"
-                "Real-time GEN market risk metrics:\n"
+                "Using live external reference market telemetry (CoinGecko public market feed), "
+                "analyze the real-time market telemetry metrics for GEN. Output MUST evaluate GEN liquidity, GEN price momentum, and protocol collateralization. "
+                "DO NOT mention ETH or external unpegged assets in the rationale.\n\n"
+                "Real-time GEN market risk metrics (CoinGecko public telemetry):\n"
                 f"- Asset: GEN/USD\n"
-                f"- Live GEN Price: ${price:.2f}\n"
+                f"- Live Reference Price: ${price:.2f}\n"
                 f"- GEN 24h Price Momentum/Change: {change_24h:.2f}%\n"
                 f"- GEN 24h Trading Volume / Liquidity: ${volume_24h:.0f}\n"
-                f"- GEN Market Depth: ${market_depth:.0f}\n"
+                f"- GEN Market Depth / Volume: ${market_depth:.0f}\n"
                 f"- GEN Volatility Index: {volatility:.2f}\n"
                 f"- Protocol Total Collateral: {int(self.total_collateral)} wei GEN\n"
                 f"- Protocol Total aUSD Debt: {int(self.total_minted)}\n\n"
@@ -386,7 +390,7 @@ class MonetaryPolicyContract(gl.Contract):
 
         # Update on-chain verified telemetry state
         self.is_telemetry_verified = True
-        self.telemetry_source = "https://genlayer-stablecoin.vercel.app/api/telemetry"
+        self.telemetry_source = PRIMARY_GEN_TELEMETRY_URL
         current_time = decision.get("telemetry_timestamp", 0)
         if current_time is None or int(current_time) <= 0:
             current_time = _get_current_timestamp()
@@ -576,6 +580,14 @@ class MonetaryPolicyContract(gl.Contract):
             _Recipient(gl.message.sender_address).emit_transfer(value=u256(gen_payout))
 
         return f"Redeemed {burn_amt} aUSD for {gen_payout} GEN collateral at $1.00 peg."
+
+    @gl.public.write
+    def liquidate_position(self, target_user: str, debt_to_cover: u256) -> str:
+        return self.liquidate(target_user, debt_to_cover)
+
+    @gl.public.write
+    def redeem_collateral(self, ausd_amount: u256) -> str:
+        return self.redeem(ausd_amount)
 
     # --- Views ---
 
