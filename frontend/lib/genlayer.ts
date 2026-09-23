@@ -1,7 +1,7 @@
 import { createClient, chains } from "genlayer-js";
 
 export const CONTRACT_ADDRESS = (process.env.NEXT_PUBLIC_CONTRACT_ADDRESS ||
-  "0x6Eebbeb877019728868d2D2752117E7F00bdfFa0") as `0x${string}`;
+  "0x570b0cf93Ca31200B6706E2534fC4d90ea0ff5C6") as `0x${string}`;
 
 export const RPC_URL =
   process.env.NEXT_PUBLIC_GENLAYER_RPC_URL || "https://studio.genlayer.com/api";
@@ -16,7 +16,9 @@ export interface ProtocolState {
   total_collateral: number;
   total_collateral_usd?: number;
   solvency_ratio_bps?: number;
+  eth_price_usd?: number;
   asset_price_usd: number;
+  collateral_price_usd?: number;
   last_fee_update?: number;
   cumulative_interest_factor?: number;
   is_telemetry_verified?: boolean;
@@ -36,6 +38,8 @@ export interface UserPosition {
   is_solvent: boolean;
   is_liquidatable?: boolean;
   ausd_balance?: number | string;
+  eth_price_usd?: number;
+  asset_price_usd?: number;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

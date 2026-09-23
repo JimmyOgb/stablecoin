@@ -106,11 +106,11 @@ async function main() {
   console.log(" - last_reasoning:", postRebalanceState.last_reasoning);
 
   console.log("\n=================================================");
-  console.log("=== TX 2: Deposit Native GEN & Mint aUSD ===");
+  console.log("=== TX 2: Deposit Native ETH & Mint aUSD ===");
   console.log("=================================================");
   const mintAmountWei = BigInt("1500000000000000000000"); // 1,500 aUSD
-  const depositWei = BigInt("2000000000000000000"); // 2 GEN
-  console.log(`Depositing 2 GEN and minting 1,500 aUSD...`);
+  const depositWei = BigInt("2000000000000000000"); // 2 ETH
+  console.log(`Depositing 2 ETH and minting 1,500 aUSD...`);
   const mintTxHash = await client.writeContract({
     address: deployedContractAddress,
     functionName: "deposit_and_mint",
@@ -163,7 +163,7 @@ async function main() {
   console.log("=== TX 4: Hard Peg Collateral Redemption ===");
   console.log("=================================================");
   const redeemAmountWei = BigInt("100000000000000000000"); // 100 aUSD
-  console.log(`Redeeming 100 aUSD at hard peg for GEN collateral...`);
+  console.log(`Redeeming 100 aUSD at hard peg for ETH collateral...`);
   const redemptionTxHash = await client.writeContract({
     address: deployedContractAddress,
     functionName: "redeem_collateral",
@@ -210,6 +210,7 @@ async function main() {
     telemetry_source: postRebalanceState.telemetry_source,
     telemetry_timestamp: postRebalanceState.telemetry_timestamp,
     last_reasoning: postRebalanceState.last_reasoning,
+    eth_price_usd: postRebalanceState.eth_price_usd ?? postRebalanceState.asset_price_usd,
     asset_price_usd: postRebalanceState.asset_price_usd,
     mint_collateral_ratio: postRebalanceState.mint_collateral_ratio,
     liquidation_ratio: postRebalanceState.liquidation_ratio,

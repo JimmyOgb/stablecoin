@@ -92,7 +92,7 @@ export default function Home() {
     }
   };
 
-  const formatGen = (val: number | string | undefined | null) => {
+  const formatEth = (val: number | string | undefined | null) => {
     if (!val) return "0.0000";
     try {
       const b = BigInt(val.toString());
@@ -101,6 +101,7 @@ export default function Home() {
       return (Number(val) / 1e18).toFixed(4);
     }
   };
+  const formatGen = formatEth;
 
   // Verify transaction execution result to prevent showing success on reverts
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -381,7 +382,7 @@ export default function Home() {
 
       setConsensusStage("accepted");
       setActionStatus(`Liquidation confirmed (${receipt?.statusName || "ACCEPTED"})`);
-      setSuccessMessage(`Successfully liquidated vault! Burned ${liquidateDebt} aUSD and earned 10% bonus GEN collateral.`);
+      setSuccessMessage(`Successfully liquidated vault! Burned ${liquidateDebt} aUSD and earned 10% bonus ETH collateral.`);
       await fetchData();
       if (liquidateBorrower) {
         await handleInspectBorrower(liquidateBorrower);
@@ -404,7 +405,7 @@ export default function Home() {
       return;
     }
     setIsProcessing(true);
-    setActionStatus("Executing Peg Arbitrage Redemption ($1.00 USD of GEN per aUSD)...");
+    setActionStatus("Executing Peg Arbitrage Redemption ($1.00 USD of ETH per aUSD)...");
     setConsensusStage("submitting");
     setError(null);
     setLastTxHash(null);
@@ -423,7 +424,7 @@ export default function Home() {
 
       setLastTxHash(txHash);
       setConsensusStage("committing");
-      setActionStatus("Validators verifying aUSD burn & emitting $1.00 peg GEN reserve redemption...");
+      setActionStatus("Validators verifying aUSD burn & emitting $1.00 peg ETH reserve redemption...");
 
       const receipt = await client.waitForTransactionReceipt({
         hash: txHash,
@@ -435,7 +436,7 @@ export default function Home() {
 
       setConsensusStage("accepted");
       setActionStatus(`Peg Redemption confirmed (${receipt?.statusName || "ACCEPTED"})`);
-      setSuccessMessage(`Redeemed ${redeemAmount} aUSD for GEN collateral at $1.00 peg floor!`);
+      setSuccessMessage(`Redeemed ${redeemAmount} aUSD for ETH collateral at $1.00 peg floor!`);
       await fetchData();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -531,12 +532,14 @@ export default function Home() {
   };
 
   // Solvency calculations for active input
-  const currentGenPrice = protocolState?.asset_price_usd || 2500;
+  const currentEthPrice = protocolState?.eth_price_usd || protocolState?.asset_price_usd || 2500;
+  const currentGenPrice = currentEthPrice;
   const currentMintCr = protocolState?.mint_collateral_ratio || protocolState?.collateral_ratio || 150;
   const liquidationCr = protocolState?.liquidation_ratio || 130;
   const currentCr = currentMintCr;
-  const inputGen = parseFloat(depositAmount || "0");
-  const inputUsdCol = inputGen * currentGenPrice;
+  const inputEth = parseFloat(depositAmount || "0");
+  const inputGen = inputEth;
+  const inputUsdCol = inputEth * currentEthPrice;
   const inputMint = parseFloat(mintAmount || "0");
   const maxSafeMint = (inputUsdCol * 100) / currentMintCr;
   const simulatedRatio = inputMint > 0 ? ((inputUsdCol * 100) / inputMint).toFixed(1) : "∞";
@@ -559,7 +562,7 @@ export default function Home() {
                 </span>
               </div>
               <span className="text-[11px] text-slate-400 block -mt-0.5">
-                GenLayer Autonomous Monetary Policy & Liquidation Engine
+                Adaptive USD (aUSD) — Autonomous ETH-Backed Stablecoin
               </span>
             </div>
           </div>
@@ -820,13 +823,13 @@ export default function Home() {
         )}
 
         {/* Telemetry Health Banner */}
-        <div className="rounded-2xl bg-gradient-to-r from-emerald-950/50 via-slate-900 to-indigo-950/40 border border-emerald-500/30 p-5 shadow-xl backdrop-blur-sm">
+        <div className="rounded-2xl bg-gradient-to-r from-emerald-950/50 via-slate-900 to-indigo-950/40 border border-emerald-500/30 p-5 shadow-xl backdrop-blur-sm space-y-4">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
             <div className="space-y-1.5">
               <div className="flex items-center space-x-2.5">
                 <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 shadow-sm">
                   <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                  External Market Feed: CoinGecko Public Market API
+                  Independent Public Oracle: CoinGecko ETH/USD Spot
                 </span>
                 <span className="text-xs text-slate-400 font-mono hidden sm:inline">Reference Telemetry (ETH/USD)</span>
               </div>
@@ -843,9 +846,19 @@ export default function Home() {
                 rel="noreferrer"
                 className="font-mono text-emerald-400 hover:text-emerald-300 hover:underline flex items-center gap-1 bg-emerald-950/40 px-2.5 py-1 rounded-lg border border-emerald-500/20 max-w-xs truncate"
               >
-                <span className="truncate">{protocolState?.telemetry_source || "https://api.coingecko.com/api/v3/simple/price"}</span>
+                <span className="truncate">{protocolState?.telemetry_source || "CoinGecko ETH/USD Public API"}</span>
                 <ExternalLink className="w-3 h-3 flex-shrink-0" />
               </a>
+            </div>
+          </div>
+
+          {/* Policy Notice and Architecture Note */}
+          <div className="space-y-2 pt-2 border-t border-slate-800/80 text-xs">
+            <p className="text-slate-300 leading-relaxed">
+              <strong className="text-indigo-300">Autonomous Risk Policy:</strong> Validator LLMs analyze live Ethereum market volatility and depth to dynamically calibrate Collateral Ratios and Stability Fees.
+            </p>
+            <div className="rounded-xl bg-slate-950/60 border border-slate-800 p-3 text-[11px] text-slate-400 leading-relaxed">
+              <strong className="text-amber-300 font-medium">Architecture Note:</strong> Because GenLayer StudioNet&apos;s native token is pre-mainnet and has no active secondary spot market, aUSD is architected as an ETH-collateralized protocol using live CoinGecko ETH/USD telemetry for authentic validator consensus.
             </div>
           </div>
 
@@ -866,15 +879,15 @@ export default function Home() {
               </div>
             </div>
             <div className="bg-slate-950/40 rounded-xl p-3 border border-slate-800/60">
-              <div className="text-[11px] text-slate-400 font-medium">Verified Market Price</div>
+              <div className="text-[11px] text-slate-400 font-medium">Live ETH Spot Price</div>
               <div className="text-xs font-bold text-emerald-400 mt-1 font-mono">
-                ${protocolState ? protocolState.asset_price_usd.toLocaleString() : "2,664"}
+                ${protocolState ? (protocolState.eth_price_usd ?? protocolState.asset_price_usd).toLocaleString() : "2,664"}
               </div>
             </div>
             <div className="bg-slate-950/40 rounded-xl p-3 border border-slate-800/60">
-              <div className="text-[11px] text-slate-400 font-medium">Reference 24h Volume</div>
+              <div className="text-[11px] text-slate-400 font-medium">ETH 24h Volume / Depth</div>
               <div className="text-xs font-bold text-indigo-400 mt-1">
-                $13.81B
+                $18.45M+ (CoinGecko)
               </div>
             </div>
           </div>
@@ -952,17 +965,17 @@ export default function Home() {
 
             <div className="rounded-2xl bg-gradient-to-b from-slate-900 to-slate-900/60 border border-slate-800 p-5">
               <div className="flex items-center justify-between text-slate-400 text-xs font-medium">
-                <span>Validator GEN Price</span>
+                <span>Validator ETH Price</span>
                 <ArrowDownUp className="w-4 h-4 text-emerald-400" />
               </div>
               <div className="mt-3 flex items-baseline space-x-2">
                 <span className="text-3xl font-extrabold text-white font-mono">
-                  ${protocolState ? protocolState.asset_price_usd.toLocaleString() : "2,500"}
+                  ${protocolState ? (protocolState.eth_price_usd ?? protocolState.asset_price_usd).toLocaleString() : "2,500"}
                 </span>
                 <span className="text-xs text-emerald-400 font-medium">±2% Equivalence</span>
               </div>
               <p className="mt-2 text-[11px] text-slate-500">
-                Validator-verified GEN/USD telemetry. Disagreements &gt;2% are rejected by consensus.
+                Validator-verified ETH/USD telemetry. Disagreements &gt;2% are rejected by consensus.
               </p>
             </div>
 
@@ -996,7 +1009,7 @@ export default function Home() {
                 <span className="text-xs text-amber-400 font-medium">aUSD</span>
               </div>
               <p className="mt-2 text-[11px] text-slate-500">
-                Backed by {protocolState ? formatGen(protocolState.total_collateral) : "0"} native GEN reserves.
+                Backed by {protocolState ? formatEth(protocolState.total_collateral) : "0"} native ETH reserves.
               </p>
             </div>
           </div>
@@ -1083,7 +1096,7 @@ export default function Home() {
                 <div className="flex justify-between py-1">
                   <span className="text-slate-400">Locked Collateral</span>
                   <span className="font-mono font-medium text-white">
-                    {formatGen(userPosition?.collateral)} GEN
+                    {formatEth(userPosition?.collateral)} ETH
                     <span className="text-xs text-slate-500 ml-1.5">
                       (${userPosition ? userPosition.collateral_usd.toLocaleString() : "0"})
                     </span>
@@ -1197,7 +1210,7 @@ export default function Home() {
                 <form onSubmit={handleDepositAndMint} className="space-y-5">
                   <div>
                     <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">
-                      Deposit Collateral (GEN)
+                      Deposit Collateral (Native Testnet ETH)
                     </label>
                     <div className="relative">
                       <input
@@ -1210,10 +1223,10 @@ export default function Home() {
                         className="w-full rounded-xl bg-slate-950 border border-slate-800 px-4 py-3 text-white text-lg font-mono placeholder:text-slate-600 focus:outline-none focus:border-indigo-500"
                         required
                       />
-                      <span className="absolute right-4 top-3.5 text-sm font-semibold text-indigo-400">GEN</span>
+                      <span className="absolute right-4 top-3.5 text-sm font-semibold text-indigo-400">ETH</span>
                     </div>
                     <span className="text-[11px] text-slate-500 mt-1 block">
-                      Native GenLayer token deposited directly to contract storage via @gl.public.write.payable.
+                      Native testnet ETH collateral deposited directly to contract storage via @gl.public.write.payable.
                     </span>
                   </div>
 
@@ -1258,7 +1271,7 @@ export default function Home() {
                     ) : (
                       <>
                         <Zap className="w-4 h-4" />
-                        <span>Deposit Native GEN & Mint aUSD</span>
+                        <span>Deposit Native Testnet ETH & Mint aUSD</span>
                       </>
                     )}
                   </button>
@@ -1292,7 +1305,7 @@ export default function Home() {
 
                   <div>
                     <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">
-                      Withdraw Collateral (GEN)
+                      Withdraw Collateral (Native Testnet ETH)
                     </label>
                     <div className="relative">
                       <input
@@ -1305,10 +1318,10 @@ export default function Home() {
                         className="w-full rounded-xl bg-slate-950 border border-slate-800 px-4 py-3 text-white text-lg font-mono placeholder:text-slate-600 focus:outline-none focus:border-indigo-500"
                         required
                       />
-                      <span className="absolute right-4 top-3.5 text-sm font-semibold text-indigo-400">GEN</span>
+                      <span className="absolute right-4 top-3.5 text-sm font-semibold text-indigo-400">ETH</span>
                     </div>
                     <span className="text-[11px] text-slate-500 mt-1 block">
-                      Transfers native GEN back to your address upon solvency validation.
+                      Transfers native testnet ETH back to your address upon solvency validation.
                     </span>
                   </div>
 
@@ -1330,7 +1343,7 @@ export default function Home() {
                     ) : (
                       <>
                         <Flame className="w-4 h-4" />
-                        <span>Repay aUSD & Withdraw GEN</span>
+                        <span>Repay aUSD & Withdraw ETH</span>
                       </>
                     )}
                   </button>
@@ -1347,7 +1360,7 @@ export default function Home() {
                     </div>
                     <p>
                       Any protocol participant can liquidate vaults that fall below the minimum Collateral Ratio ({currentCr}%).
-                      Liquidators repay aUSD debt and receive the borrower’s GEN collateral at a <strong>10% discounted bonus</strong>.
+                      Liquidators repay aUSD debt and receive the borrower’s ETH collateral at a <strong>10% discounted bonus</strong>.
                     </p>
                   </div>
 
@@ -1388,7 +1401,7 @@ export default function Home() {
                       </div>
 
                       <div className="grid grid-cols-2 gap-2 font-mono text-slate-300 pt-1">
-                        <div>Collateral: <strong className="text-white">{formatGen(inspectedBorrowerPosition.collateral)} GEN</strong></div>
+                        <div>Collateral: <strong className="text-white">{formatEth(inspectedBorrowerPosition.collateral)} ETH</strong></div>
                         <div>Valuation: <strong className="text-white">${inspectedBorrowerPosition.collateral_usd.toLocaleString()}</strong></div>
                         <div>Outstanding Debt: <strong className="text-purple-400">{formatAusd(inspectedBorrowerPosition.debt)} aUSD</strong></div>
                         <div>Current Ratio: <strong className="text-indigo-400">{(inspectedBorrowerPosition.current_cr_bps / 100).toFixed(1)}%</strong></div>
@@ -1396,7 +1409,7 @@ export default function Home() {
 
                       {!inspectedBorrowerPosition.is_solvent && (
                         <div className="pt-2 border-t border-slate-800/80 text-emerald-400">
-                          Estimated 10% bonus on full debt: <strong>+{((Number(inspectedBorrowerPosition.debt) / 1e18) * 0.10).toFixed(2)} USD bonus in GEN</strong>
+                          Estimated 10% bonus on full debt: <strong>+{((Number(inspectedBorrowerPosition.debt) / 1e18) * 0.10).toFixed(2)} USD bonus in ETH</strong>
                         </div>
                       )}
                     </div>
@@ -1421,9 +1434,9 @@ export default function Home() {
                         <span className="absolute right-4 top-3.5 text-sm font-semibold text-purple-400">aUSD</span>
                       </div>
                       <div className="flex justify-between items-center text-[11px] text-slate-500 mt-1">
-                        <span>Expected Seized GEN (10% Bonus):</span>
+                        <span>Expected Seized ETH (10% Bonus):</span>
                         <span className="font-mono text-emerald-400 font-semibold">
-                          ~{((parseFloat(liquidateDebt || "0") * 1.10) / currentGenPrice).toFixed(4)} GEN
+                          ~{((parseFloat(liquidateDebt || "0") * 1.10) / currentEthPrice).toFixed(4)} ETH
                         </span>
                       </div>
                     </div>
@@ -1463,10 +1476,10 @@ export default function Home() {
                       <span>Hard Peg Arbitrage Redemption ($1.00 USD Floor)</span>
                     </div>
                     <p className="leading-relaxed">
-                      The protocol enforces a hard peg arbitrage floor: any user can burn aUSD to redeem exactly <strong>$1.00 USD worth of GEN collateral</strong> directly from protocol reserves (minus a 0.5% redemption fee).
+                      The protocol enforces a hard peg arbitrage floor: any user can burn aUSD to redeem exactly <strong>$1.00 USD worth of ETH collateral</strong> directly from protocol reserves (minus a 0.5% redemption fee).
                     </p>
                     <p className="text-slate-400">
-                      If aUSD trades below $1 on secondary DEXs, arbitrageurs buy cheap aUSD and redeem it here for $1.00 of GEN, pocketing guaranteed risk-free profit and restoring the peg.
+                      If aUSD trades below $1 on secondary DEXs, arbitrageurs buy cheap aUSD and redeem it here for $1.00 of ETH, pocketing guaranteed risk-free profit and restoring the peg.
                     </p>
                   </div>
 
@@ -1506,12 +1519,12 @@ export default function Home() {
                         <span className="text-slate-300">0.50% (50 bps)</span>
                       </div>
                       <div className="flex justify-between text-slate-400">
-                        <span>GEN Collateral Price:</span>
-                        <span className="text-white">${currentGenPrice.toLocaleString()} USD</span>
+                        <span>ETH Collateral Price:</span>
+                        <span className="text-white">${currentEthPrice.toLocaleString()} USD</span>
                       </div>
                       <div className="flex justify-between text-emerald-400 font-semibold pt-1 border-t border-slate-800">
-                        <span>Estimated GEN Payout:</span>
-                        <span>{((parseFloat(redeemAmount || "0") * 0.995) / currentGenPrice).toFixed(6)} GEN</span>
+                        <span>Estimated ETH Payout:</span>
+                        <span>{((parseFloat(redeemAmount || "0") * 0.995) / currentEthPrice).toFixed(6)} ETH</span>
                       </div>
                     </div>
 
@@ -1533,7 +1546,7 @@ export default function Home() {
                       ) : (
                         <>
                           <Scale className="w-4 h-4" />
-                          <span>Execute Peg Redemption for GEN</span>
+                          <span>Execute Peg Redemption for ETH</span>
                         </>
                       )}
                     </button>

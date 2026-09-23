@@ -4,8 +4,9 @@ from genlayer import *
 import json
 import datetime
 
-PRIMARY_GEN_TELEMETRY_URL = "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd&include_24hr_vol=true&include_24hr_change=true&include_last_updated_at=true"
-DEFAULT_GEN_PRICE = 2500
+PRIMARY_TELEMETRY_URL = "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd&include_24hr_vol=true&include_24hr_change=true&include_last_updated_at=true"
+DEFAULT_ETH_PRICE = 2500
+DEFAULT_GEN_PRICE = 2500  # Compatibility alias
 SECONDS_PER_YEAR = 31536000
 
 @gl.evm.contract_interface
@@ -29,36 +30,36 @@ def _get_current_timestamp() -> int:
     except Exception:
         return 0
 
-def _fetch_gen_market_data() -> dict:
+def _fetch_market_data() -> dict:
     try:
-        web_res = gl.nondet.web.get(PRIMARY_GEN_TELEMETRY_URL)
+        web_res = gl.nondet.web.get(PRIMARY_TELEMETRY_URL)
     except Exception as e:
-        raise Exception("TelemetryFailureClosed: Live GEN market telemetry is unavailable. Rebalance aborted.") from e
+        raise Exception("TelemetryFailureClosed: Live Ethereum market telemetry is unavailable. Rebalance aborted.") from e
 
     if web_res.status != 200:
-        raise Exception("TelemetryFailureClosed: Live GEN market telemetry is unavailable. Rebalance aborted.")
+        raise Exception("TelemetryFailureClosed: Live Ethereum market telemetry is unavailable. Rebalance aborted.")
 
     raw_body = web_res.body
     body_text = raw_body.decode("utf-8") if isinstance(raw_body, bytes) else str(raw_body)
     if not body_text or not body_text.strip():
-        raise Exception("TelemetryFailureClosed: Live GEN market telemetry is unavailable. Rebalance aborted.")
+        raise Exception("TelemetryFailureClosed: Live Ethereum market telemetry is unavailable. Rebalance aborted.")
 
     try:
         payload = json.loads(body_text)
     except Exception as e:
-        raise Exception("TelemetryFailureClosed: Live GEN market telemetry is unavailable. Rebalance aborted.") from e
+        raise Exception("TelemetryFailureClosed: Live Ethereum market telemetry is unavailable. Rebalance aborted.") from e
 
     if not isinstance(payload, dict):
-        raise Exception("TelemetryFailureClosed: Live GEN market telemetry is unavailable. Rebalance aborted.")
+        raise Exception("TelemetryFailureClosed: Live Ethereum market telemetry is unavailable. Rebalance aborted.")
 
     data = payload.get("ethereum")
     if not isinstance(data, dict):
-        raise Exception("TelemetryFailureClosed: Live GEN market telemetry is unavailable. Rebalance aborted.")
+        raise Exception("TelemetryFailureClosed: Live Ethereum market telemetry is unavailable. Rebalance aborted.")
 
     required_keys = ["usd", "usd_24h_vol", "usd_24h_change"]
     for k in required_keys:
         if k not in data or data[k] is None:
-            raise Exception("TelemetryFailureClosed: Live GEN market telemetry is unavailable. Rebalance aborted.")
+            raise Exception("TelemetryFailureClosed: Live Ethereum market telemetry is unavailable. Rebalance aborted.")
 
     try:
         price_val = float(data["usd"])
@@ -66,7 +67,7 @@ def _fetch_gen_market_data() -> dict:
         change_val = float(data["usd_24h_change"])
         ts_val = int(data.get("last_updated_at", 0))
     except (ValueError, TypeError) as e:
-        raise Exception("TelemetryFailureClosed: Live GEN market telemetry is unavailable. Rebalance aborted.") from e
+        raise Exception("TelemetryFailureClosed: Live Ethereum market telemetry is unavailable. Rebalance aborted.") from e
 
     return {
         "price_usd": price_val,
@@ -87,6 +88,7 @@ class MonetaryPolicyContract(gl.Contract):
     last_reasoning: str
     total_minted: u256
     total_collateral: u256
+    eth_price_usd: u256
     asset_price_usd: u256
     user_collateral: TreeMap[str, u256]
     user_debt: TreeMap[str, u256]
@@ -104,14 +106,15 @@ class MonetaryPolicyContract(gl.Contract):
         self.liquidation_ratio = u256(130)
         self.collateral_ratio = u256(150)
         self.stability_fee_bps = u256(300)
-        self.last_reasoning = "Genesis monetary policy: Normal volatility conditions for native GEN. Mint CR set to 150%, liquidation ratio set to 130%, stability fee 300 bps."
+        self.last_reasoning = "Genesis monetary policy: Normal volatility conditions for native testnet ETH collateral. Mint CR set to 150%, liquidation ratio set to 130%, stability fee 300 bps."
         self.total_minted = u256(0)
         self.total_collateral = u256(0)
-        self.asset_price_usd = u256(DEFAULT_GEN_PRICE)
+        self.eth_price_usd = u256(DEFAULT_ETH_PRICE)
+        self.asset_price_usd = u256(DEFAULT_ETH_PRICE)
         self.last_fee_update = u256(0)
         self.cumulative_interest_factor = u256(10**18)
         self.is_telemetry_verified = False
-        self.telemetry_source = ""
+        self.telemetry_source = "CoinGecko ETH/USD Public API"
         self.telemetry_timestamp = u256(0)
 
     # --- Standard Token Mechanics (Transferable aUSD) ---
@@ -237,7 +240,7 @@ class MonetaryPolicyContract(gl.Contract):
             return True
         if col_amount <= 0:
             return False
-        price = int(self.asset_price_usd)
+        price = int(self.eth_price_usd)
         cr = int(self.mint_collateral_ratio)
         col_val_usd = col_amount * price
         return (col_val_usd * 100) >= (debt_amount * cr)
@@ -247,7 +250,7 @@ class MonetaryPolicyContract(gl.Contract):
             return False
         if col_amount <= 0:
             return True
-        price = int(self.asset_price_usd)
+        price = int(self.eth_price_usd)
         liq_ratio = int(self.liquidation_ratio)
         col_val_usd = col_amount * price
         return (col_val_usd * 100) < (debt_amount * liq_ratio)
@@ -257,7 +260,7 @@ class MonetaryPolicyContract(gl.Contract):
     @gl.public.write
     def rebalance_policy(self) -> None:
         def leader_fn() -> dict:
-            market_data = _fetch_gen_market_data()
+            market_data = _fetch_market_data()
             price = market_data["price_usd"]
             change_24h = market_data["price_change_24h_pct"]
             volume_24h = market_data["volume_24h_usd"]
@@ -266,28 +269,19 @@ class MonetaryPolicyContract(gl.Contract):
             tele_ts = market_data["timestamp"]
 
             prompt = (
-                "You are the autonomous risk engine for the GEN native token and aUSD stablecoin. "
-                "Using live external reference market telemetry (CoinGecko public market feed), "
-                "analyze the real-time market telemetry metrics for GEN. Output MUST evaluate GEN liquidity, GEN price momentum, and protocol collateralization. "
-                "DO NOT mention ETH or external unpegged assets in the rationale.\n\n"
-                "Real-time GEN market risk metrics (CoinGecko public telemetry):\n"
-                f"- Asset: GEN/USD\n"
-                f"- Live Reference Price: ${price:.2f}\n"
-                f"- GEN 24h Price Momentum/Change: {change_24h:.2f}%\n"
-                f"- GEN 24h Trading Volume / Liquidity: ${volume_24h:.0f}\n"
-                f"- GEN Market Depth / Volume: ${market_depth:.0f}\n"
-                f"- GEN Volatility Index: {volatility:.2f}\n"
-                f"- Protocol Total Collateral: {int(self.total_collateral)} wei GEN\n"
-                f"- Protocol Total aUSD Debt: {int(self.total_minted)}\n\n"
+                "You are the autonomous monetary policy engine for an ETH-collateralized Adaptive USD (aUSD) stablecoin on GenLayer. "
+                f"Evaluate live Ethereum market metrics from CoinGecko (Spot Price: ${price:.2f}, 24h Volume: ${volume_24h:.0f}, 24h Change: {change_24h:.2f}%). "
+                "Analyze ETH market risk, volatility, and protocol collateralization. "
+                "Propose the optimal collateral ratio (120%-200%) and stability fee (150-1200 bps). Store your rationale.\n\n"
+                f"Protocol Total Collateral: {int(self.total_collateral)} wei ETH\n"
+                f"Protocol Total aUSD Debt: {int(self.total_minted)}\n\n"
                 "Evaluate tail-risk, volatility, and downward price action to recommend protocol parameters:\n"
-                "1. gen_price_usd: Validator-verified GEN market price (integer USD).\n"
+                "1. eth_price_usd: Validator-verified ETH market price (integer USD).\n"
                 "2. new_cr: Minimum mint collateral ratio (e.g. 150 for 150%). Range: 120 to 200.\n"
                 "3. new_fee_bps: Stability borrow fee in basis points (e.g. 300 for 3.00%). Range: 150 to 1200.\n"
-                "4. rationale: A concise macroeconomic explanation strictly evaluating GEN liquidity, GEN price momentum, and protocol collateralization. "
-                f"Your rationale MUST explicitly cite the actual live market figures (such as 24h volume of ${volume_24h:.0f} or liquidity depth of ${market_depth:.0f}). "
-                "Must exclusively reference GEN and aUSD.\n\n"
+                "4. rationale: A concise macroeconomic explanation strictly evaluating live Ethereum market dynamics and quoting CoinGecko numbers.\n\n"
                 "Respond with strictly valid JSON:\n"
-                '{"gen_price_usd": <int>, "new_cr": <int>, "new_fee_bps": <int>, "rationale": "<string>"}'
+                '{"eth_price_usd": <int>, "new_cr": <int>, "new_fee_bps": <int>, "rationale": "<string>"}'
             )
 
             llm_res = gl.nondet.exec_prompt(prompt, response_format="json")
@@ -299,13 +293,10 @@ class MonetaryPolicyContract(gl.Contract):
             else:
                 raise gl.vm.UserError("[LLM_ERROR] Invalid LLM response format")
 
-            raw_price = parsed.get("gen_price_usd", parsed.get("price", int(round(price))))
+            raw_price = parsed.get("eth_price_usd", parsed.get("gen_price_usd", parsed.get("price", int(round(price)))))
             raw_cr = parsed.get("new_cr", parsed.get("collateral_ratio", 150))
             raw_fee = parsed.get("new_fee_bps", parsed.get("stability_fee_bps", 300))
-            rationale_text = str(parsed.get("rationale", parsed.get("reasoning", "GEN market metrics analyzed; policy rebalanced.")))
-
-            # Guarantee that rationale exclusively references GEN and aUSD, never ETH
-            rationale_text = rationale_text.replace("Ethereum", "GEN").replace("ETH", "GEN").replace("Ether", "GEN")
+            rationale_text = str(parsed.get("rationale", parsed.get("reasoning", f"Live Ethereum market telemetry verified: spot price ${price:.2f}, 24h volume ${volume_24h:.0f}.")))
 
             try:
                 price_val = int(round(float(str(raw_price).strip())))
@@ -328,6 +319,7 @@ class MonetaryPolicyContract(gl.Contract):
             final_price = max(1, price_val)
 
             return {
+                "eth_price_usd": final_price,
                 "gen_price_usd": final_price,
                 "new_cr": clamped_cr,
                 "new_fee_bps": clamped_fee,
@@ -344,8 +336,8 @@ class MonetaryPolicyContract(gl.Contract):
 
             validator_data = leader_fn()
 
-            l_price = leader_data.get("gen_price_usd")
-            v_price = validator_data.get("gen_price_usd")
+            l_price = leader_data.get("eth_price_usd", leader_data.get("gen_price_usd"))
+            v_price = validator_data.get("eth_price_usd", validator_data.get("gen_price_usd"))
             l_cr = leader_data.get("new_cr")
             v_cr = validator_data.get("new_cr")
             l_fee = leader_data.get("new_fee_bps")
@@ -385,12 +377,15 @@ class MonetaryPolicyContract(gl.Contract):
         self.collateral_ratio = u256(new_mint_cr)
         self.stability_fee_bps = u256(decision["new_fee_bps"])
         self.last_reasoning = decision["rationale"]
-        if decision.get("gen_price_usd") and decision["gen_price_usd"] > 0:
-            self.asset_price_usd = u256(decision["gen_price_usd"])
+
+        committed_price = decision.get("eth_price_usd", decision.get("gen_price_usd"))
+        if committed_price and int(committed_price) > 0:
+            self.eth_price_usd = u256(int(committed_price))
+            self.asset_price_usd = u256(int(committed_price))
 
         # Update on-chain verified telemetry state
         self.is_telemetry_verified = True
-        self.telemetry_source = PRIMARY_GEN_TELEMETRY_URL
+        self.telemetry_source = "CoinGecko ETH/USD Public API"
         current_time = decision.get("telemetry_timestamp", 0)
         if current_time is None or int(current_time) <= 0:
             current_time = _get_current_timestamp()
@@ -499,7 +494,7 @@ class MonetaryPolicyContract(gl.Contract):
             raise gl.vm.UserError("[EXPECTED] Borrower has no debt to liquidate")
 
         # Check if borrower is unsafe under liquidation_ratio
-        price = int(self.asset_price_usd)
+        price = int(self.eth_price_usd)
         liq_cr = int(self.liquidation_ratio)
         col_val_usd = borrower_col * price
         if (col_val_usd * 100) >= (borrower_debt * liq_cr):
@@ -512,27 +507,27 @@ class MonetaryPolicyContract(gl.Contract):
         if liquidator_bal < actual_cover:
             raise gl.vm.UserError("[EXPECTED] Liquidator has insufficient aUSD balance")
 
-        # Seized GEN = (debt_to_cover * 1.10) / gen_price_usd
+        # Seized ETH = (debt_to_cover * 1.10) / eth_price_usd
         # in integer math: (actual_cover * 110) // (100 * price)
-        seized_gen = (actual_cover * 110) // (100 * price)
-        if seized_gen > borrower_col:
-            seized_gen = borrower_col
+        seized_eth = (actual_cover * 110) // (100 * price)
+        if seized_eth > borrower_col:
+            seized_eth = borrower_col
 
         self.balances[liquidator] = u256(liquidator_bal - actual_cover)
 
         new_borrower_debt = borrower_debt - actual_cover
-        new_borrower_col = borrower_col - seized_gen
+        new_borrower_col = borrower_col - seized_eth
         self.user_debt[borrower_addr] = u256(new_borrower_debt)
         self.user_last_factor[borrower_addr] = self.cumulative_interest_factor
         self.user_collateral[borrower_addr] = u256(new_borrower_col)
 
-        self.total_collateral = u256(int(self.total_collateral) - seized_gen)
+        self.total_collateral = u256(int(self.total_collateral) - seized_eth)
         self.total_minted = u256(int(self.total_minted) - actual_cover)
 
-        if seized_gen > 0:
-            _Recipient(gl.message.sender_address).emit_transfer(value=u256(seized_gen))
+        if seized_eth > 0:
+            _Recipient(gl.message.sender_address).emit_transfer(value=u256(seized_eth))
 
-        return f"Liquidated {actual_cover} debt of {borrower_addr}. Seized {seized_gen} GEN collateral with 10% bonus."
+        return f"Liquidated {actual_cover} debt of {borrower_addr}. Seized {seized_eth} ETH collateral with 10% bonus."
 
     # --- Hard Peg Defense Mechanism (Redeem at $1.00 USD) ---
 
@@ -549,22 +544,22 @@ class MonetaryPolicyContract(gl.Contract):
         if user_bal < burn_amt:
             raise gl.vm.UserError("[EXPECTED] Insufficient aUSD balance to redeem")
 
-        # Redeem $1.00 USD worth of GEN minus 0.5% redemption fee
-        # payout_gen = (burn_amt * 0.995) / price = (burn_amt * 995) // (1000 * price)
-        price = int(self.asset_price_usd)
-        gen_payout = (burn_amt * 995) // (1000 * price)
+        # Redeem $1.00 USD worth of ETH minus 0.5% redemption fee
+        # payout_eth = (burn_amt * 0.995) / price = (burn_amt * 995) // (1000 * price)
+        price = int(self.eth_price_usd)
+        eth_payout = (burn_amt * 995) // (1000 * price)
 
         tot_col = int(self.total_collateral)
         tot_debt = int(self.total_minted)
 
-        # 1. Require contract native GEN balance >= gen_to_redeem
-        if gen_payout > tot_col:
+        # 1. Require contract native ETH balance >= eth_to_redeem
+        if eth_payout > tot_col:
             raise gl.vm.UserError("[EXPECTED] Global protocol insolvency risk: Redemptions paused")
 
         # 2. Calculate protocol-wide remaining collateral and debt:
-        # remaining_collateral_usd = (total_collateral - gen_to_redeem) * gen_price
+        # remaining_collateral_usd = (total_collateral - eth_to_redeem) * eth_price
         # remaining_debt = total_debt - ausd_amount
-        remaining_col = tot_col - gen_payout
+        remaining_col = tot_col - eth_payout
         remaining_debt = tot_debt - burn_amt if tot_debt >= burn_amt else 0
         remaining_col_usd = remaining_col * price
 
@@ -576,10 +571,10 @@ class MonetaryPolicyContract(gl.Contract):
         self.total_minted = u256(remaining_debt)
         self.total_collateral = u256(remaining_col)
 
-        if gen_payout > 0:
-            _Recipient(gl.message.sender_address).emit_transfer(value=u256(gen_payout))
+        if eth_payout > 0:
+            _Recipient(gl.message.sender_address).emit_transfer(value=u256(eth_payout))
 
-        return f"Redeemed {burn_amt} aUSD for {gen_payout} GEN collateral at $1.00 peg."
+        return f"Redeemed {burn_amt} aUSD for {eth_payout} ETH collateral at $1.00 peg."
 
     @gl.public.write
     def liquidate_position(self, target_user: str, debt_to_cover: u256) -> str:
@@ -595,7 +590,7 @@ class MonetaryPolicyContract(gl.Contract):
     def get_state(self) -> dict:
         tot_col = int(self.total_collateral)
         tot_minted = int(self.total_minted)
-        price = int(self.asset_price_usd)
+        price = int(self.eth_price_usd)
         col_usd = (tot_col * price) // (10**18) if price > 0 else 0
         solvency_ratio_bps = (tot_col * price * 10000) // tot_minted if tot_minted > 0 else 1000000
 
@@ -609,7 +604,9 @@ class MonetaryPolicyContract(gl.Contract):
             "total_collateral": tot_col,
             "total_collateral_usd": col_usd,
             "solvency_ratio_bps": solvency_ratio_bps,
+            "eth_price_usd": price,
             "asset_price_usd": price,
+            "collateral_price_usd": price,
             "last_fee_update": int(self.last_fee_update),
             "cumulative_interest_factor": int(self.cumulative_interest_factor),
             "is_telemetry_verified": self.is_telemetry_verified,
@@ -622,7 +619,7 @@ class MonetaryPolicyContract(gl.Contract):
         user = normalize_address(user_address)
         col = int(self.user_collateral.get(user, u256(0)))
         debt = self._get_user_debt(user)
-        price = int(self.asset_price_usd)
+        price = int(self.eth_price_usd)
         cr = int(self.mint_collateral_ratio)
         liq_cr = int(self.liquidation_ratio)
 
@@ -643,4 +640,6 @@ class MonetaryPolicyContract(gl.Contract):
             "is_solvent": self._is_solvent(col, debt),
             "is_liquidatable": self._is_liquidatable(col, debt),
             "ausd_balance": ausd_balance,
+            "eth_price_usd": price,
+            "asset_price_usd": price,
         }
