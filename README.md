@@ -96,8 +96,8 @@ Unlike naive protocols that rely on static hardcoded values, insecure off-chain 
 ## 3. StudioNet Deployment & Verifiable Live 4-Transaction Trail
 
 ### Deployed Contract Metadata
-- **Contract Address:** [`0x570b0cf93Ca31200B6706E2534fC4d90ea0ff5C6`](https://genlayer-explorer.vercel.app/address/0x570b0cf93Ca31200B6706E2534fC4d90ea0ff5C6)
-- **Deployment Transaction Hash:** [`0xee5ddf7712dc42a46220ffdab29024943254bb42dd349eae1750ac616bedc760`](https://genlayer-explorer.vercel.app/tx/0xee5ddf7712dc42a46220ffdab29024943254bb42dd349eae1750ac616bedc760)
+- **Contract Address:** [`0xe7968a0d7888A14Fd48CfDECC9c731659D0c6C95`](https://genlayer-explorer.vercel.app/address/0xe7968a0d7888A14Fd48CfDECC9c731659D0c6C95)
+- **Deployment Transaction Hash:** [`0xffdda77d4aca666950781f2c3a416f8fd27198e27ac0c3aef2105987687701f7`](https://genlayer-explorer.vercel.app/tx/0xffdda77d4aca666950781f2c3a416f8fd27198e27ac0c3aef2105987687701f7)
 - **Deployment Consensus:** `MAJORITY_AGREE` (5 / 5 Validators Agreed)
 - **Status:** `ACCEPTED` / `FINALIZED`
 - **Network:** GenLayer StudioNet (Chain ID `61999`)
@@ -113,15 +113,15 @@ Against this contract, a complete, genuine 4-transaction lifecycle trail was exe
 
 | # | Protocol Module | Transaction Hash | Status | Consensus Result | Explorer Link |
 |---|-----------------|------------------|--------|------------------|---------------|
-| **Tx 1** | **Autonomous AI Rebalance Policy** | `0x1bb5509d10c1bef3c55a49cfe62cd92b27a820a186c5ff55ab749eba5eb73c1d` | `ACCEPTED` / `FINALIZED` | `MAJORITY_AGREE` (5/5) | [Verify on Explorer](https://genlayer-explorer.vercel.app/tx/0x1bb5509d10c1bef3c55a49cfe62cd92b27a820a186c5ff55ab749eba5eb73c1d) |
-| **Tx 2** | **Deposit Native ETH & Mint aUSD** | `0x6e86da2dfa354ca4183022274b7485b7101a7920d9a998199b15871561e66651` | `ACCEPTED` / `FINALIZED` | `MAJORITY_AGREE` (5/5) | [Verify on Explorer](https://genlayer-explorer.vercel.app/tx/0x6e86da2dfa354ca4183022274b7485b7101a7920d9a998199b15871561e66651) |
-| **Tx 3** | **Liquidation Engine Execution** | `0xf241c30d40cf4f8211c5019b84035162f90ec8c8b5a960c7cd4ec74aca200104` | `ACCEPTED` / `FINALIZED` | `MAJORITY_AGREE` (5/5) | [Verify on Explorer](https://genlayer-explorer.vercel.app/tx/0xf241c30d40cf4f8211c5019b84035162f90ec8c8b5a960c7cd4ec74aca200104) |
-| **Tx 4** | **Hard Peg Collateral Redemption** | `0xfd5dc6c859b48fefa6a6439db22862150e65cbeb91da8107a88be93b5e2704f3` | `ACCEPTED` / `FINALIZED` | `MAJORITY_AGREE` (5/5) | [Verify on Explorer](https://genlayer-explorer.vercel.app/tx/0xfd5dc6c859b48fefa6a6439db22862150e65cbeb91da8107a88be93b5e2704f3) |
+| **Tx 1** | **Autonomous AI Rebalance Policy** | `0x5a04836cf67079f06ff102b149036256ab041b1942079128681739eaad53d9cf` | `ACCEPTED` / `FINALIZED` | `MAJORITY_AGREE` (5/5) | [Verify on Explorer](https://genlayer-explorer.vercel.app/tx/0x5a04836cf67079f06ff102b149036256ab041b1942079128681739eaad53d9cf) |
+| **Tx 2** | **Deposit Native ETH & Mint aUSD** | `0xd041db325581a26443bf742660660d4d8d017e845e44561b6b231db6c5ff1503` | `ACCEPTED` / `FINALIZED` | `MAJORITY_AGREE` (5/5) | [Verify on Explorer](https://genlayer-explorer.vercel.app/tx/0xd041db325581a26443bf742660660d4d8d017e845e44561b6b231db6c5ff1503) |
+| **Tx 3** | **Liquidation Engine Execution** | `0x5a40e76786b153f25ebbc1a00b98e67289241cba4a2e731147baf13802d6bc69` | `ACCEPTED` / `FINALIZED` | `MAJORITY_AGREE` (5/5) | [Verify on Explorer](https://genlayer-explorer.vercel.app/tx/0x5a40e76786b153f25ebbc1a00b98e67289241cba4a2e731147baf13802d6bc69) |
+| **Tx 4** | **Hard Peg Collateral Redemption** | `0xf055e783dfb2a8dcd460f729b3137ab6b830aa55cb094ce2b63a6a740c1578d8` | `ACCEPTED` / `FINALIZED` | `MAJORITY_AGREE` (5/5) | [Verify on Explorer](https://genlayer-explorer.vercel.app/tx/0xf055e783dfb2a8dcd460f729b3137ab6b830aa55cb094ce2b63a6a740c1578d8) |
 
 **Detailed Transaction Verifications:**
-1. **Tx 1 — Autonomous Rebalance:** Validators independently queried CoinGecko Ethereum market telemetry (ETH spot `$2,660.02`, 24h volume `$19.18B`, 24h change `-3.33%`). Consensus verified `is_telemetry_verified = True`, `telemetry_source = "CoinGecko ETH/USD Public API"`, `eth_price_usd = 2660`, `mint_collateral_ratio = 165%`, `liquidation_ratio = 145%`, `stability_fee_bps = 450`. Validator consensus reasoning:
-   > *"CoinGecko ETH spot is $2660.02 with 24h volume of $19178525748 and a 24h change of -3.33%, indicating meaningful but not extreme downside pressure with solid liquidity. Because protocol collateral and aUSD debt are both zero, there is no immediate insolvency risk, so parameters should be set for prudent new issuance rather than defensive deleveraging. The negative daily move raises short-term tail-risk if selling accelerates, but deep trading volume supports price discovery..."*
-2. **Tx 2 — Deposit & Mint:** Deposited 2.0 ETH native collateral (`2000000000000000000` wei) and minted 1,500 aUSD (`1500000000000000000000` wei) at 354.66% CR.
+1. **Tx 1 — Autonomous Rebalance:** Validators independently queried CoinGecko Ethereum market telemetry (ETH spot `$2,692.74`, rounded to `$2,693`, 24h volume `$12.57B`, 24h change `+0.25%`). Consensus verified `is_telemetry_verified = True`, `telemetry_source = "CoinGecko ETH/USD Public API"`, `eth_price_usd = 2693`, `mint_collateral_ratio = 145%`, `liquidation_ratio = 125%`, `stability_fee_bps = 300`. Validator consensus reasoning:
+   > *"CoinGecko ETH spot is $2692.74, rounded to $2693, with 24h volume of $12,572,676,589 and a 24h change of +0.25%. Price action is essentially flat and does not indicate acute downward momentum, while high spot volume suggests strong liquidity and orderly market depth. However, ETH remains a volatile crypto collateral asset with meaningful tail-risk under sudden macro or onchain stress, so parameters should stay moderately conservative rather than aggressive. With protocol total collateral at 0 we..."*
+2. **Tx 2 — Deposit & Mint:** Deposited 2.0 ETH native collateral (`2000000000000000000` wei) and minted 1,500 aUSD (`1500000000000000000000` wei) at 359.06% CR.
 3. **Tx 3 — Liquidation Engine:** Called `liquidate_position(0xe4220c4b71877bb94eb173f467ef5c5557017085, 100000000000000000000)` validating the 20% liquidation buffer separation and safety threshold enforcement under validator consensus.
 4. **Tx 4 — Peg Redemption Arbitrage:** Called `redeem_collateral(100000000000000000000)` burning 100 aUSD at the exact $1.00 hard peg to redeem native ETH collateral reserves under the global solvency guard.
 
@@ -252,7 +252,7 @@ tests/direct/test_monetary_policy.py::test_invariant_test_d_global_solvency_guar
 ### Environment Configuration
 Configure `frontend/.env.local`:
 ```env
-NEXT_PUBLIC_CONTRACT_ADDRESS=0x570b0cf93Ca31200B6706E2534fC4d90ea0ff5C6
+NEXT_PUBLIC_CONTRACT_ADDRESS=0xe7968a0d7888A14Fd48CfDECC9c731659D0c6C95
 NEXT_PUBLIC_GENLAYER_RPC_URL=https://studio.genlayer.com/api
 NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=c4f79cc821944d9680842e34466bfbd
 ```

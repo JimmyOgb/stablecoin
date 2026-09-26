@@ -223,6 +223,42 @@ async function main() {
     JSON.stringify(summary, null, 2)
   );
   console.log("Saved full deployment & trail summary to latest_deployment.json");
+
+  // Update frontend/.env.local
+  const envLocalPath = path.resolve(__dirname, "../.env.local");
+  if (fs.existsSync(envLocalPath)) {
+    let envContent = fs.readFileSync(envLocalPath, "utf8");
+    envContent = envContent.replace(
+      /NEXT_PUBLIC_CONTRACT_ADDRESS=0x[a-fA-F0-9]{40}/,
+      `NEXT_PUBLIC_CONTRACT_ADDRESS=${deployedContractAddress}`
+    );
+    fs.writeFileSync(envLocalPath, envContent);
+    console.log("Updated frontend/.env.local with new contract address");
+  }
+
+  // Update frontend/.env.example
+  const envExamplePath = path.resolve(__dirname, "../.env.example");
+  if (fs.existsSync(envExamplePath)) {
+    let envExampleContent = fs.readFileSync(envExamplePath, "utf8");
+    envExampleContent = envExampleContent.replace(
+      /NEXT_PUBLIC_CONTRACT_ADDRESS=0x[a-fA-F0-9]{40}/,
+      `NEXT_PUBLIC_CONTRACT_ADDRESS=${deployedContractAddress}`
+    );
+    fs.writeFileSync(envExamplePath, envExampleContent);
+    console.log("Updated frontend/.env.example with new contract address");
+  }
+
+  // Update frontend/lib/genlayer.ts
+  const genlayerTsPath = path.resolve(__dirname, "../lib/genlayer.ts");
+  if (fs.existsSync(genlayerTsPath)) {
+    let genlayerTsContent = fs.readFileSync(genlayerTsPath, "utf8");
+    genlayerTsContent = genlayerTsContent.replace(
+      /0x[a-fA-F0-9]{40}/,
+      deployedContractAddress
+    );
+    fs.writeFileSync(genlayerTsPath, genlayerTsContent);
+    console.log("Updated frontend/lib/genlayer.ts with new contract address");
+  }
 }
 
 main().catch((err) => {

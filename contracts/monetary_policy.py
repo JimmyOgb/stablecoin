@@ -6,7 +6,6 @@ import datetime
 
 PRIMARY_TELEMETRY_URL = "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd&include_24hr_vol=true&include_24hr_change=true&include_last_updated_at=true"
 DEFAULT_ETH_PRICE = 2500
-DEFAULT_GEN_PRICE = 2500  # Compatibility alias
 SECONDS_PER_YEAR = 31536000
 
 @gl.evm.contract_interface
@@ -293,7 +292,7 @@ class MonetaryPolicyContract(gl.Contract):
             else:
                 raise gl.vm.UserError("[LLM_ERROR] Invalid LLM response format")
 
-            raw_price = parsed.get("eth_price_usd", parsed.get("gen_price_usd", parsed.get("price", int(round(price)))))
+            raw_price = parsed.get("eth_price_usd", parsed.get("price", int(round(price))))
             raw_cr = parsed.get("new_cr", parsed.get("collateral_ratio", 150))
             raw_fee = parsed.get("new_fee_bps", parsed.get("stability_fee_bps", 300))
             rationale_text = str(parsed.get("rationale", parsed.get("reasoning", f"Live Ethereum market telemetry verified: spot price ${price:.2f}, 24h volume ${volume_24h:.0f}.")))
@@ -320,7 +319,6 @@ class MonetaryPolicyContract(gl.Contract):
 
             return {
                 "eth_price_usd": final_price,
-                "gen_price_usd": final_price,
                 "new_cr": clamped_cr,
                 "new_fee_bps": clamped_fee,
                 "rationale": rationale_text[:500],
@@ -336,8 +334,8 @@ class MonetaryPolicyContract(gl.Contract):
 
             validator_data = leader_fn()
 
-            l_price = leader_data.get("eth_price_usd", leader_data.get("gen_price_usd"))
-            v_price = validator_data.get("eth_price_usd", validator_data.get("gen_price_usd"))
+            l_price = leader_data.get("eth_price_usd")
+            v_price = validator_data.get("eth_price_usd")
             l_cr = leader_data.get("new_cr")
             v_cr = validator_data.get("new_cr")
             l_fee = leader_data.get("new_fee_bps")
@@ -378,7 +376,7 @@ class MonetaryPolicyContract(gl.Contract):
         self.stability_fee_bps = u256(decision["new_fee_bps"])
         self.last_reasoning = decision["rationale"]
 
-        committed_price = decision.get("eth_price_usd", decision.get("gen_price_usd"))
+        committed_price = decision.get("eth_price_usd")
         if committed_price and int(committed_price) > 0:
             self.eth_price_usd = u256(int(committed_price))
             self.asset_price_usd = u256(int(committed_price))

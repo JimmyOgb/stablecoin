@@ -101,7 +101,6 @@ export default function Home() {
       return (Number(val) / 1e18).toFixed(4);
     }
   };
-  const formatGen = formatEth;
 
   // Verify transaction execution result to prevent showing success on reverts
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -180,7 +179,7 @@ export default function Home() {
 
       setLastTxHash(txHash);
       setConsensusStage("committing");
-      setActionStatus("Stage 1/3: Committing - Validators capturing GEN market telemetry and running comparative consensus...");
+      setActionStatus("Stage 1/3: Committing - Validators capturing Ethereum market telemetry and running comparative consensus...");
 
       const revealTimer = setTimeout(() => {
         setConsensusStage("revealing");
@@ -198,7 +197,7 @@ export default function Home() {
 
       setConsensusStage("accepted");
       setActionStatus(`Stage 3/3: Consensus Reached! Status: ${receipt?.statusName || "ACCEPTED"}`);
-      setSuccessMessage("Monetary policy successfully rebalanced with validator-checked GEN price!");
+      setSuccessMessage("Monetary policy successfully rebalanced with validator-checked Ethereum price!");
       await fetchData();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -210,7 +209,7 @@ export default function Home() {
     }
   };
 
-  // Deposit Collateral (GEN) & Borrow aUSD
+  // Deposit Collateral (ETH) & Borrow aUSD
   const handleDepositAndMint = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!isConnected || !wagmiAddress) {
@@ -256,7 +255,7 @@ export default function Home() {
 
       setConsensusStage("accepted");
       setActionStatus(`Transaction finalized: ${receipt?.statusName || "ACCEPTED"}`);
-      setSuccessMessage(`Vault deposit confirmed! Minted ${mintAmount} aUSD into your wallet against ${depositAmount} GEN.`);
+      setSuccessMessage(`Vault deposit confirmed! Minted ${mintAmount} aUSD into your wallet against ${depositAmount} ETH.`);
       await fetchData();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -268,7 +267,7 @@ export default function Home() {
     }
   };
 
-  // Repay aUSD & Withdraw Collateral (GEN)
+  // Repay aUSD & Withdraw Collateral (ETH)
   const handleRepayAndWithdraw = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!isConnected || !wagmiAddress) {
@@ -300,7 +299,7 @@ export default function Home() {
 
       const timer = setTimeout(() => {
         setConsensusStage("revealing");
-        setActionStatus("Verifying balance, debt burn, and emitting native GEN transfer...");
+        setActionStatus("Verifying balance, debt burn, and emitting native ETH transfer...");
       }, 5000);
 
       const receipt = await client.waitForTransactionReceipt({
@@ -314,7 +313,7 @@ export default function Home() {
 
       setConsensusStage("accepted");
       setActionStatus(`Repay & Withdraw confirmed (${receipt?.statusName || "ACCEPTED"})`);
-      setSuccessMessage(`Burned ${burnAmount} aUSD and unlocked ${withdrawAmount} GEN collateral!`);
+      setSuccessMessage(`Burned ${burnAmount} aUSD and unlocked ${withdrawAmount} ETH collateral!`);
       await fetchData();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -533,12 +532,10 @@ export default function Home() {
 
   // Solvency calculations for active input
   const currentEthPrice = protocolState?.eth_price_usd || protocolState?.asset_price_usd || 2500;
-  const currentGenPrice = currentEthPrice;
   const currentMintCr = protocolState?.mint_collateral_ratio || protocolState?.collateral_ratio || 150;
   const liquidationCr = protocolState?.liquidation_ratio || 130;
   const currentCr = currentMintCr;
   const inputEth = parseFloat(depositAmount || "0");
-  const inputGen = inputEth;
   const inputUsdCol = inputEth * currentEthPrice;
   const inputMint = parseFloat(mintAmount || "0");
   const maxSafeMint = (inputUsdCol * 100) / currentMintCr;
@@ -834,7 +831,7 @@ export default function Home() {
                 <span className="text-xs text-slate-400 font-mono hidden sm:inline">Reference Telemetry (ETH/USD)</span>
               </div>
               <p className="text-xs text-slate-300">
-                <span className="font-semibold text-emerald-400">Validator Equivalence:</span> Independent HTTP fetches compared within &plusmn;2.0% tolerance band.
+                <span className="font-semibold text-emerald-400">Validator Equivalence:</span> Independent HTTP fetches of Ethereum spot price compared within &plusmn;2.0% tolerance band
               </p>
             </div>
 
@@ -857,8 +854,13 @@ export default function Home() {
             <p className="text-slate-300 leading-relaxed">
               <strong className="text-indigo-300">Autonomous Risk Policy:</strong> Validator LLMs analyze live Ethereum market volatility and depth to dynamically calibrate Collateral Ratios and Stability Fees.
             </p>
-            <div className="rounded-xl bg-slate-950/60 border border-slate-800 p-3 text-[11px] text-slate-400 leading-relaxed">
-              <strong className="text-amber-300 font-medium">Architecture Note:</strong> Because GenLayer StudioNet&apos;s native token is pre-mainnet and has no active secondary spot market, aUSD is architected as an ETH-collateralized protocol using live CoinGecko ETH/USD telemetry for authentic validator consensus.
+            <div className="rounded-xl bg-slate-950/60 border border-slate-800 p-3 text-[11px] text-slate-400 leading-relaxed space-y-1">
+              <div>
+                <strong className="text-emerald-400 font-medium">Collateral Asset:</strong> Native Testnet ETH (Valued via live CoinGecko ETH/USD telemetry)
+              </div>
+              <div>
+                <strong className="text-amber-300 font-medium">Architecture Note:</strong> Because GenLayer StudioNet&apos;s native token is pre-mainnet and has no active secondary spot market, aUSD is architected as an ETH-collateralized protocol using live CoinGecko ETH/USD telemetry for authentic validator consensus.
+              </div>
             </div>
           </div>
 
